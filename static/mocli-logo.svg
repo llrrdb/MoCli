@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- 主体渐变：科技感灰蓝色调 -->
+    <linearGradient id="triGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#b0bec5"/>
+      <stop offset="50%" stop-color="#90a4ae"/>
+      <stop offset="100%" stop-color="#607d8b"/>
+    </linearGradient>
+    <!-- 描边渐变：淡蓝高光 -->
+    <linearGradient id="strokeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00e5ff"/>
+      <stop offset="100%" stop-color="#00b0ff"/>
+    </linearGradient>
+    <!-- 外发光 -->
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feFlood flood-color="#00e5ff" flood-opacity="0.35"/>
+      <feComposite in2="blur" operator="in"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <!-- 内部高光 -->
+    <linearGradient id="innerGlow" x1="30%" y1="0%" x2="70%" y2="100%">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.3)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 背景圆盘（可选，用于 icon 场景） -->
+  <circle cx="256" cy="256" r="240" fill="#1a1a2e" opacity="0"/>
+
+  <!-- 三角形主体 (朝右上方 20° 旋转，与 mopoint.py 一致) -->
+  <!-- base_angles = [210°, 330°, 90°], rotation = 20°, 即实际角度 [230°, 350°, 110°] -->
+  <!-- 以 256,256 为中心, 半径 180 计算顶点:
+       P1: 256 + 180*cos(230°) = 256 + 180*(-0.6428) ≈ 140.3
+           256 + 180*sin(230°) = 256 + 180*(-0.7660) ≈ 118.1
+       P2: 256 + 180*cos(350°) = 256 + 180*(0.9848)  ≈ 433.3
+           256 + 180*sin(350°) = 256 + 180*(-0.1736) ≈ 224.8
+       P3: 256 + 180*cos(110°) = 256 + 180*(-0.3420) ≈ 194.4
+           256 + 180*sin(110°) = 256 + 180*(0.9397)  ≈ 425.1
+  -->
+  <polygon
+    points="140,118 433,225 194,425"
+    fill="url(#triGrad)"
+    stroke="url(#strokeGrad)"
+    stroke-width="8"
+    stroke-linejoin="round"
+    stroke-linecap="round"
+    filter="url(#glow)"
+  />
+
+  <!-- 内部高光层 -->
+  <polygon
+    points="175,155 400,235 210,395"
+    fill="url(#innerGlow)"
+    opacity="0.5"
+  />
+</svg>

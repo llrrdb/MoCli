@@ -1,0 +1,54 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# --- 虚拟环境 ---
+.conda/
+.venv/
+venv/
+ENV/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- 操作系统 ---
+.DS_Store
+Thumbs.db
+
+# --- 项目特有 ---
+backup/
+mocli.db*
+my_keywords.txt
+*.log
+tests/
+
+# --- 语音识别/大模型 (体积巨大，不建议提交) ---
+sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01/
+sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/
+models/
+
+# --- 构建产物 ---
+build/
+dist/
+*.spec
+build_installer.iss
