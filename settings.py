@@ -15,9 +15,9 @@ import logging
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
-    QFrame, QApplication, QTextBrowser
+    QFrame, QApplication, QTextBrowser, QMessageBox
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QEvent
 from PyQt6.QtGui import QFont, QIcon, QCursor, QPainter, QColor, QPen
 
 from qfluentwidgets import (
@@ -148,6 +148,8 @@ class LLMPage(ScrollArea):
         self.memory_slider.setRange(2, 50)
         self.memory_slider.setValue(mem_val)
         self.memory_slider.setMinimumHeight(32)
+        self.memory_slider.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.memory_slider.installEventFilter(self)
         self.memory_slider.valueChanged.connect(
             lambda v: self._mem_label.setText(f"当前容量：{v} 条历史对话")
         )
@@ -160,28 +162,39 @@ class LLMPage(ScrollArea):
 
         # 卡片3：系统提示词
         c3 = FluentCard("系统提示词 (System Prompt)",
-                         "定义 AI 的个性与行为准则。留空则使用内置默认指令。")
+                         "定义 AI 的个性与行为准则。可直接编辑内置默认提示词或替换为自定义内容。")
         self.prompt_edit = TextEdit()
-        self.prompt_edit.setPlaceholderText(
-            "留空则使用内置默认提示词。\n\n"
-            "如需自定义，在此输入完整的系统提示词。\n"
-            "示例：You are MoCli, a helpful AI assistant..."
-        )
+        # 加载已保存的自定义提示词，如果没有则显示内置默认提示词
         saved_prompt = self.db.get("custom_system_prompt", "").strip()
-        self.prompt_edit.setPlainText(saved_prompt)
-        self.prompt_edit.setMinimumHeight(200)
+        if saved_prompt:
+            self.prompt_edit.setPlainText(saved_prompt)
+        else:
+            from llm import LLMEngine
+            self.prompt_edit.setPlainText(LLMEngine.DEFAULT_SYSTEM_PROMPT)
+        self.prompt_edit.setMinimumHeight(250)
         c3.add_widget(self.prompt_edit)
 
         btn_row = QHBoxLayout()
-        reset_btn = PushButton("清空并恢复默认")
+        reset_btn = PushButton("恢复内置默认")
         reset_btn.setMinimumHeight(36)
-        reset_btn.clicked.connect(lambda: self.prompt_edit.setPlainText(""))
+        reset_btn.clicked.connect(self._reset_prompt)
         btn_row.addWidget(reset_btn)
         btn_row.addStretch()
         c3.add_layout(btn_row)
         self.lay.addWidget(c3)
 
         self.lay.addStretch()
+
+    def _reset_prompt(self):
+        """恢复内置默认提示词"""
+        from llm import LLMEngine
+        self.prompt_edit.setPlainText(LLMEngine.DEFAULT_SYSTEM_PROMPT)
+
+    def eventFilter(self, obj, event):
+        """拦截滑块的滚轮事件，防止滚动页面时误触"""
+        if hasattr(self, 'memory_slider') and obj is self.memory_slider and event.type() == QEvent.Type.Wheel:
+            return True  # 吐掉滚轮事件
+        return super().eventFilter(obj, event)
 
 
 # ==========================================
@@ -571,19 +584,19 @@ class AboutPage(ScrollArea):
         lay.setSpacing(20)
         self.setWidget(content)
 
-        # 标题卡片
-        card = FluentCard("关于 MoCli", "AI-Powered Desktop Companion with Visual Pointing")
+        # 无标题卡片，直接放置 QTextBrowser 占满全部空间
         self._browser = QTextBrowser()
         self._browser.setOpenExternalLinks(True)
         self._browser.setStyleSheet("""
             QTextBrowser {
-                background: transparent;
-                border: none;
+                background: rgba(255, 255, 255, 0.7);
+                border: 1px solid rgba(0, 0, 0, 0.05);
+                border-radius: 8px;
+                padding: 24px;
                 font-size: 14px;
                 line-height: 1.6;
             }
         """)
-        self._browser.setMinimumHeight(400)
 
         # 加载并渲染免责声明
         md_path = static("免责声明.md")
@@ -595,9 +608,7 @@ class AboutPage(ScrollArea):
         else:
             self._browser.setPlainText("未找到免责声明文件。")
 
-        card.add_widget(self._browser)
-        lay.addWidget(card)
-        lay.addStretch()
+        lay.addWidget(self._browser)
 
     @staticmethod
     def _render_markdown(md_text: str) -> str:
@@ -696,12 +707,51 @@ class SettingsWindow(MSFluentWindow):
         )
 
     def closeEvent(self, event):
-        """关闭窗口时自动保存"""
-        self._save()
+        """关闭窗口时检查是否有未保存的更改"""
         if hasattr(self.cursor_page, '_cursor_timer'):
             self.cursor_page._cursor_timer.stop()
         self.cursor_page._hide_crosshair()
+
+        # 检查是否有未保存的修改
+        if self._has_unsaved_changes():
+            reply = QMessageBox.question(
+                self,
+                "未保存的更改",
+                "您有未保存的设置更改，是否在关闭前保存？",
+                QMessageBox.StandardButton.Yes |
+                QMessageBox.StandardButton.No |
+                QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._save()
+                event.accept()
+            elif reply == QMessageBox.StandardButton.No:
+                event.accept()
+            else:
+                event.ignore()
+                return
+        else:
+            event.accept()
+
         super().closeEvent(event)
+
+    def _has_unsaved_changes(self) -> bool:
+        """检查当前 UI 值是否与数据库中已保存的值不同"""
+        db = self.db
+        checks = [
+            db.get("base_url") != self.llm_page.url_input.text().strip(),
+            db.get("model") != self.llm_page.model_input.text().strip(),
+            db.get("api_key") != self.llm_page.api_key_input.text().strip(),
+            db.get_int("memory_size") != self.llm_page.memory_slider.value(),
+            db.get("custom_system_prompt", "").strip() != self.llm_page.prompt_edit.toPlainText().strip(),
+            db.get("wakeup_keyword") != self.voice_page.keyword_input.text().strip(),
+            db.get_bool("wakeup_enabled") != self.voice_page.wakeup_switch.isChecked(),
+            db.get_bool("tts_enabled") != self.voice_page.tts_switch.isChecked(),
+            db.get("tts_url") != self.voice_page.tts_url_input.text().strip(),
+            db.get("tts_model") != self.voice_page.tts_model_input.text().strip(),
+        ]
+        return any(checks)
 
     def _save(self):
         """保存所有配置到数据库"""

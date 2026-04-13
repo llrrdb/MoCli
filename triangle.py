@@ -94,11 +94,11 @@ class TriangleCursor(QWidget):
 
         # ─── 光标外观参数（硬编码，修改后重启程序生效） ───
         # 弹簧自然周期（秒）：越小越灵敏紧跟（0.15 极紧 | 0.3 灵敏 | 0.5 平衡 | 0.8 慢悠）
-        self._spring_response      = 0.4
+        self._spring_response      = 0.3
         # 阻尼比：< 1 有弹性回弹（0.4 弹跃感 | 0.6 平衡 | 1.0 无回弹临界阻尼）
-        self._damping_fraction     = 0.6
+        self._damping_fraction     = 0.7
         # 整体透明度（0.0 全透明 ~ 1.0 不透明）
-        self._opacity              = 0.9
+        self._opacity              = 0.6
         # 各状态颜色（修改此处即可自定义，格式 QColor(R, G, B)）
         self._color_idle           = QColor(40, 44, 52)      # 待机（暗灰）
         self._color_ai             = QColor(0, 200, 255)     # AI 飞行指向（青色）
@@ -112,6 +112,12 @@ class TriangleCursor(QWidget):
         self._init_input_box()
         self._init_animation()
         self._init_timers()
+
+        # 返航颜色渐变进度（0.0=蓝色 → 1.0=灰色，完成后置 None）
+        self._color_fade_progress = None
+        self._color_fade_timer = QTimer(self)
+        self._color_fade_timer.setInterval(30)  # ~33fps
+        self._color_fade_timer.timeout.connect(self._tick_color_fade)
 
     # ==========================================
     # 初始化
@@ -260,6 +266,13 @@ class TriangleCursor(QWidget):
             is_circle = True
             color = self._color_thinking
             radius_scale = 1.0 + breath * 0.25
+        elif self._color_fade_progress is not None:
+            # 返航后颜色渐变：蓝色 → 灰色
+            t = self._color_fade_progress
+            r = int(self._color_ai.red()   + (self._color_idle.red()   - self._color_ai.red())   * t)
+            g = int(self._color_ai.green() + (self._color_idle.green() - self._color_ai.green()) * t)
+            b = int(self._color_ai.blue()  + (self._color_idle.blue()  - self._color_ai.blue())  * t)
+            color = QColor(r, g, b)
         elif self.ai_mode or self.is_returning:
             color = self._color_ai
         elif self.is_typing:
@@ -278,6 +291,25 @@ class TriangleCursor(QWidget):
         pix_painter = QPainter(pixmap)
         pix_painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
+        # 非待机状态：先画一层柔和暗色光晕底影，增强在相近色背景上的可见性
+        is_active = is_circle or self.ai_mode or self.is_returning or self._color_fade_progress is not None
+        if is_active:
+            shadow_color = QColor(0, 0, 0, 50)  # 半透明黑色
+            shadow_pen = QPen(shadow_color)
+            shadow_pen.setWidthF(9.0 / dpr)  # 比主笔画粗一圈
+            shadow_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            shadow_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pix_painter.setPen(shadow_pen)
+            pix_painter.setBrush(Qt.BrushStyle.NoBrush)
+            if is_circle:
+                cx = self._draw_cx
+                cy = self._draw_cy
+                r = self._draw_radius * radius_scale
+                pix_painter.drawEllipse(QPointF(cx, cy), r, r)
+            else:
+                pix_painter.drawPolygon(self._tri_polygon)
+
+        # 主图形绘制
         pen = QPen(color)
         pen.setWidthF(6.0 / dpr)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
@@ -300,7 +332,13 @@ class TriangleCursor(QWidget):
             
         pix_painter.end()
 
-        painter.setOpacity(self._opacity)
+        # 待机态透明度微呼吸（Δ±0.1，节奏缓慢）
+        if not (self.is_listening or self.is_thinking or self.ai_mode or self.is_returning or self.is_typing or self._color_fade_progress is not None):
+            idle_breath = (math.sin(time.time() * 2) + 1) / 2  # 0~1，周期约 3 秒
+            opacity = self._opacity - 0.1 + 0.2 * idle_breath
+        else:
+            opacity = self._opacity
+        painter.setOpacity(opacity)
         painter.drawPixmap(0, 0, pixmap)
 
     def showEvent(self, event):
@@ -478,7 +516,20 @@ class TriangleCursor(QWidget):
     def _on_animation_finished(self):
         if self.is_returning:
             self.is_returning = False
-            self.update()
+            # 启动颜色渐变：蓝色 → 灰色（1 秒过渡）
+            self._color_fade_progress = 0.0
+            self._color_fade_timer.start()
+
+    def _tick_color_fade(self):
+        """颜色渐变定时器回调：30ms 一帧，1 秒完成"""
+        if self._color_fade_progress is None:
+            self._color_fade_timer.stop()
+            return
+        self._color_fade_progress += 0.03  # ~33 帧 × 0.03 ≈ 1.0
+        if self._color_fade_progress >= 1.0:
+            self._color_fade_progress = None
+            self._color_fade_timer.stop()
+        self.update()
 
     def on_tts_state_changed(self, is_speaking: bool):
         """TTS 状态变更回调：如果从说话变为停下，且堆积了返回指令，则立即返航"""
