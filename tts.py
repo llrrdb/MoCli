@@ -78,7 +78,7 @@ class TTSEngine:
 
     async def speaker_loop(self, out_stream):
         """持续从播放队列取出事件或 PCM 数据（消费者）"""
-        current_label = "巡航准备中"
+        current_label = ""
         
         try:
             while True:
@@ -93,6 +93,9 @@ class TTSEngine:
                             self._tts_state_callback(False)
                         if self.app_signals:
                             self.app_signals.cursor_return.emit()
+                        
+                        # 【重要修复】：重置标签状态机，防止上一轮对话的最后一个点位名称残留到下一轮开头
+                        current_label = ""
                         continue
                         
                     if isinstance(chunk, dict):
@@ -100,7 +103,7 @@ class TTSEngine:
                         if chunk["type"] == "sync_text":
                             if self.app_signals:
                                 text_content = chunk["content"]
-                                display_str = f"🎯 指向：{current_label}\n\n💬 {text_content}"
+                                display_str = f"🎯 {current_label}\n\n💬 {text_content}"
                                 self.app_signals.bubble_sync.emit(display_str)
                                 
                         elif chunk["type"] == "point":

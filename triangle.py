@@ -94,11 +94,11 @@ class TriangleCursor(QWidget):
 
         # ─── 光标外观参数（硬编码，修改后重启程序生效） ───
         # 弹簧自然周期（秒）：越小越灵敏紧跟（0.15 极紧 | 0.3 灵敏 | 0.5 平衡 | 0.8 慢悠）
-        self._spring_response      = 0.3
+        self._spring_response      = 0.4
         # 阻尼比：< 1 有弹性回弹（0.4 弹跃感 | 0.6 平衡 | 1.0 无回弹临界阻尼）
-        self._damping_fraction     = 0.7
+        self._damping_fraction     = 0.6
         # 整体透明度（0.0 全透明 ~ 1.0 不透明）
-        self._opacity              = 0.6
+        self._opacity              = 0.7
         # 各状态颜色（修改此处即可自定义，格式 QColor(R, G, B)）
         self._color_idle           = QColor(40, 44, 52)      # 待机（暗灰）
         self._color_ai             = QColor(0, 200, 255)     # AI 飞行指向（青色）
@@ -484,9 +484,7 @@ class TriangleCursor(QWidget):
 
     def _fly_and_hold(self, px: int, py: int, label: str):
         """飞向目标坐标并无限驻留，不触发自动返回。接收物理像素。"""
-        # 显示头衔气泡
-        display_str = f"🎯 指向：{label}"
-        self.display_text(display_str)
+        # 气泡显示由 tts.py 的 sync_text 统一驱动，此处不再重复刷新
 
         # 物理像素 → 逻辑像素
         lx, ly = self._physical_to_logical(px, py)

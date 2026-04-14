@@ -153,7 +153,7 @@ Special Debug Command:
             "model": self.db.get("model"),
             "messages": messages,
             "temperature": 0.7,
-            "max_tokens": 2048
+            "max_tokens": 4096
         }
 
         try:
