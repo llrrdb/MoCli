@@ -53,10 +53,14 @@ logger = logging.getLogger(__name__)
 class AppSignals(QObject):
     """AI 后台线程 → Qt 主线程的信号桥（用于安全更新 UI）"""
     update_text = pyqtSignal(str)       # 更新气泡文字
-    move_to = pyqtSignal(int, int)      # 三角形飞向坐标
+    move_to = pyqtSignal(int, int)      # 三角形飞向坐标 (单点时代保留用)
     request_tts = pyqtSignal(str)       # 请求 TTS 朗读
     set_action_state = pyqtSignal(str)  # 更新光标颜色/形状状态
-
+    
+    # --- 多点同步巡航新增专线信号 ---
+    cursor_fly_and_hold = pyqtSignal(int, int, str)  # 飞往新点位并驻留，携带标签
+    cursor_return = pyqtSignal()                     # 打点巡航结束，触发归位
+    bubble_sync = pyqtSignal(str)                    # 同步刷新上方的语音文字双轨气泡
 
 class VoiceSignals(QObject):
     """语音引擎 → Qt 主线程的信号桥"""
@@ -78,16 +82,18 @@ class VoiceManager:
     SAMPLE_RATE = 16000
     CHUNK_SIZE = 480    # 30ms 每帧
 
-    def __init__(self, db: DBManager, signals: VoiceSignals):
+    def __init__(self, db: DBManager, signals: VoiceSignals, app_signals: AppSignals = None):
         self.db = db
         self.signals = signals
+        self.app_signals = app_signals
         self.loop = None
         self._thread = None
 
         # 子引擎实例
         self.wakeup_engine = WakeupEngine() if HAS_WAKEUP else None
         self.stt_engine = STTEngine() if HAS_STT else None
-        self.tts_engine = TTSEngine(db) if TTSEngine.is_available() else None
+        # 下放 app_signals 将界面的完全控制权全托管给语音引擎列队枢纽
+        self.tts_engine = TTSEngine(db, app_signals=app_signals) if TTSEngine.is_available() else None
 
         # TTS 状态回调 → 信号
         if self.tts_engine:

@@ -91,10 +91,16 @@ class MoCli:
             lambda text: self.voice_mgr.request_tts(text)
         )
         self.app_signals.set_action_state.connect(self.cursor.set_action_state)
+        
+        # 多点同步巡航专线信号连接
+        self.app_signals.cursor_fly_and_hold.connect(self.cursor._fly_and_hold)
+        self.app_signals.cursor_return.connect(self.cursor._start_return)
+        self.app_signals.bubble_sync.connect(self.cursor.display_text)
 
         # 语音管理器
         self.voice_signals = VoiceSignals()
-        self.voice_mgr = VoiceManager(self.db, self.voice_signals)
+        # 【关键重构】：将控制生命周期的 app_signals 下发给 TTS，使扬声器可以反向驾驭 UI 动画
+        self.voice_mgr = VoiceManager(self.db, self.voice_signals, self.app_signals)
 
         # 连接所有信号
         self._connect_signals()
@@ -151,26 +157,18 @@ class MoCli:
             # 恢复空闲状态
             self.app_signals.set_action_state.emit("idle")
 
-            if result["error"]:
+            if result.get("error"):
                 self.app_signals.update_text.emit(f"错误: {result['error']}")
                 return
 
-            # 组合带有目标 Label 的富文本显示
-            display = result["spoken_text"] or "完成"
+            # 多航点巡航升级：
+            # 不再做早期切割，直接将包含所有 [P_POINT:x,y:标题] 事件的长文本全部送进语音指挥部流水线统筹
+            raw_text = result.get("raw_text", "")
+            if raw_text:
+                self.app_signals.request_tts.emit(raw_text)
+            else:
+                self.app_signals.update_text.emit("执行完毕")
 
-            # 飞向目标坐标（同时组合标题显示）
-            if result["point"]:
-                px, py, label = result["point"]
-                # 如果有目标，则将目标作为头部强调标题，并加入一条视觉分割线
-                display = f"{label}\n──────────────\n{display}"
-                self.app_signals.move_to.emit(px, py)
-
-            # 更新合并后的 UI 气泡
-            self.app_signals.update_text.emit(display)
-
-            # TTS 朗读
-            if result["spoken_text"]:
-                self.app_signals.request_tts.emit(result["spoken_text"])
         except Exception as e:
             logger.error("AI 请求异常: %s", e, exc_info=True)
             self.app_signals.set_action_state.emit("idle")

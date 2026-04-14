@@ -482,8 +482,41 @@ class TriangleCursor(QWidget):
     # 飞行动画
     # ==========================================
 
+    def _fly_and_hold(self, px: int, py: int, label: str):
+        """飞向目标坐标并无限驻留，不触发自动返回。接收物理像素。"""
+        # 显示头衔气泡
+        display_str = f"🎯 指向：{label}"
+        self.display_text(display_str)
+
+        # 物理像素 → 逻辑像素
+        lx, ly = self._physical_to_logical(px, py)
+        
+        # 停掉上一轮残留
+        self.return_timer.stop()
+        self.anim.stop()
+        self.hide_timer.stop()
+        
+        self.ai_mode = True
+        self.is_returning = False
+        self._is_animating = True
+
+        current = self.pos()
+        dist = ((current.x() - lx) ** 2 + (current.y() - ly) ** 2) ** 0.5
+        flight_sec = max(0.6, min(1.4, dist / 800.0))
+        
+        mid_x = (current.x() + lx) / 2.0
+        mid_y = (current.y() + ly) / 2.0
+        arc_height = min(dist * 0.2, 150.0)
+
+        self._flight_start = QPointF(current.x(), current.y())
+        self._flight_end = QPointF(lx, ly)
+        self._flight_control = QPointF(mid_x, mid_y - arc_height)
+
+        self.anim.setDuration(int(flight_sec * 1000))
+        self.anim.start()
+
     def ai_move_to(self, x: int, y: int):
-        """让三角形飞向指定屏幕坐标（接收物理像素，自动转换为逻辑像素）"""
+        """（已废弃被保留用于向下兼容单点指令）"""
         lx, ly = self._physical_to_logical(x, y)
         self._fly_to(lx, ly, dwell_ms=4000)
 
