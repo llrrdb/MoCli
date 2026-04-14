@@ -54,6 +54,8 @@ MoCli/
 └── mocli.db         # SQLite 配置数据库（自动生成）
 ```
 
+实时语音合成可以查看https://github.com/llrrdb/Qwen3-TTS-X这个项目
+
 ### 数据流
 
 ```
