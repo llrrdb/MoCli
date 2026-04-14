@@ -243,8 +243,8 @@ class TriangleCursor(QWidget):
         self._flight_end = QPointF(0, 0)
         self._flight_control = QPointF(0, 0)
         self._is_animating = False
-        # 光标默认在几何形态上有一个 110 度（向下偏右）的主朝向！这里必须是 110.0，否则落地瞬间会抽搐
-        self._flight_rotation = 110.0
+        # 光标默认在几何形态上有一个 120 度（向下偏右）的主朝向！这里必须是 120.0，否则落地瞬间会抽搐
+        self._flight_rotation = 120.0
         self._flight_scale = 1.0
 
     def _init_timers(self):
@@ -317,10 +317,10 @@ class TriangleCursor(QWidget):
         total_scale = base_radius_scale * self._flight_scale
         
         pix_painter.translate(cx, cy)
-        # _tri_polygon 默认尖端指向 90度（向下）并预旋转了 20 度 = 110度
-        # 当 flight_rot 为方向角时，需减去 110 达到正确的机头指向；为了防止浮点误差导致的不必要旋转使用条件约束
-        if abs(flight_rot - 110.0) > 0.1:
-            pix_painter.rotate(flight_rot - 110.0)
+        # _tri_polygon 默认尖端指向 90度（向下）并预旋转了 20 度 = 120度
+        # 当 flight_rot 为方向角时，需减去 120 达到正确的机头指向；为了防止浮点误差导致的不必要旋转使用条件约束
+        if abs(flight_rot - 120.0) > 0.1:
+            pix_painter.rotate(flight_rot - 120.0)
         if total_scale != 1.0:
             pix_painter.scale(total_scale, total_scale)
         pix_painter.translate(-cx, -cy)
@@ -429,9 +429,9 @@ class TriangleCursor(QWidget):
             self.update()
 
         # >> 平滑回正角度逻辑与连贯动力学 <<
-        # 降落完全停稳后（不论是抵达了 AI 目标正在朗读，还是返回了鼠标旁），利用高频跳钟将机头顺滑拉回 110 度的完美静止倾角
+        # 降落完全停稳后（不论是抵达了 AI 目标正在朗读，还是返回了鼠标旁），利用高频跳钟将机头顺滑拉回 120 度的完美静止倾角
         if not getattr(self, '_is_animating', False):
-            diff = (110.0 - self._flight_rotation) % 360.0
+            diff = (120.0 - self._flight_rotation) % 360.0
             if diff > 180.0:
                 diff -= 360.0
             if abs(diff) > 0.5:
@@ -593,9 +593,9 @@ class TriangleCursor(QWidget):
         
         # 判断是往屏幕左边飞还是右边飞，以调整顺逆时针的超视距空翻！
         if self._flight_end.x() >= self._flight_start.x():
-            self._flight_rotation = 110.0 + smoothed_spin * 240.0
+            self._flight_rotation = 120.0 + smoothed_spin * 240.0
         else:
-            self._flight_rotation = 110.0 - smoothed_spin * 240.0
+            self._flight_rotation = 120.0 - smoothed_spin * 240.0
 
         # 3. 立体缩放感（抛物线顶点最大，起降点恢复1.0，最大放大1.3倍）
         scale_pulse = math.sin(t * math.pi)
@@ -607,6 +607,15 @@ class TriangleCursor(QWidget):
 
     def _on_animation_finished(self):
         self._is_animating = False
+        
+        # 【关键的断层修复】当飞行降落，动画交接给物理系统的那一刹那，
+        # 我们必须把物理系统的底层坐标池与真实的屏幕物理坐标对齐，并归零动量。
+        # 否则 `_track_mouse` 恢复运行的第一帧，会拿取之前留在原地的落后坐标来强行驱动弹簧，从而导致闪烁回拉残影！
+        self.actual_x = float(self.x())
+        self.actual_y = float(self.y())
+        self.vel_x = 0.0
+        self.vel_y = 0.0
+        
         if self.is_returning:
             self.is_returning = False
             self._flight_scale = 1.0

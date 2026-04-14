@@ -1,13 +1,31 @@
-<svg 
-  xmlns="http://www.w3.org/2000/svg" 
-  width="180" 
-  height="180" 
-  viewBox="0 0 24 24" 
-  fill="#1f2937" 
-  stroke="#1f2937" 
-  stroke-width="2" 
-  stroke-linecap="round" 
-  stroke-linejoin="round"
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="180"
+  height="180"
+  viewBox="1 1 24 24"
 >
-  <path d="M 4 4 L 20 10 Q 13 13 10 20 Z" />
+  <defs>
+    <path
+      id="myShape"
+      d="M 5 5 L 21 10 Q 13 13 10 21 Z"
+      stroke-linejoin="round"
+    />
+  </defs>
+
+  <g transform="rotate(5 13 13)">
+    <use
+      href="#myShape"
+      fill="none"
+      stroke="#3b82f6"
+      stroke-width="6"
+    />
+
+    <use
+      href="#myShape"
+      color="#643bf7ff"
+      fill="currentColor"
+      stroke="currentColor"
+      stroke-width="2"
+    />
+  </g>
 </svg>
