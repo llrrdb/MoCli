@@ -155,14 +155,18 @@ class MoCli:
                 self.app_signals.update_text.emit(f"错误: {result['error']}")
                 return
 
-            # 通过信号安全地更新 UI（不可直接调用 Widget 方法）
+            # 组合带有目标 Label 的富文本显示
             display = result["spoken_text"] or "完成"
-            self.app_signals.update_text.emit(display)
 
-            # 飞向目标坐标（偏移量已在 llm.py 归一化阶段叠加）
+            # 飞向目标坐标（同时组合标题显示）
             if result["point"]:
                 px, py, label = result["point"]
+                # 如果有目标，则将目标作为头部强调标题，并加入一条视觉分割线
+                display = f"{label}\n──────────────\n{display}"
                 self.app_signals.move_to.emit(px, py)
+
+            # 更新合并后的 UI 气泡
+            self.app_signals.update_text.emit(display)
 
             # TTS 朗读
             if result["spoken_text"]:

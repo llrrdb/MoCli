@@ -17,6 +17,7 @@ dependencies = [
     "pyqt6-fluent-widgets>=1.11.0",
     "pyqt6-qt6>=6.11.0",
     "pyqt6-sip>=13.11.0",
+    "requests>=2.33.1",
     "setuptools==70.3.0",
     "sherpa-onnx==1.12.35",
     "webrtcvad==2.0.10",

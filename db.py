@@ -53,7 +53,7 @@ class DBManager:
         # 默认配置项
         defaults = {
             "base_url": "http://127.0.0.1:1234/v1/chat/completions",
-            "model": "microsoft_fara-7b",
+            "model": "qwen/qwen2.5-vl-7b",
             "api_key": "lm-studio",
             "tts_url": "http://localhost:8100/v1/audio/speech",
             "tts_model": "model-base",

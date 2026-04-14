@@ -21,18 +21,45 @@ logger = logging.getLogger(__name__)
 
 def capture_screen() -> tuple:
     """
-    截取主屏幕，返回 (base64_str, width, height)。
-    图像为原生物理分辨率（如 2560x1600），无任何缩放。
+    截取主屏幕并进行强力压缩，返回 (base64_str, raw_width, raw_height)。
+    返回的宽高始终是屏幕的原始物理分辨率，以确保 AI 坐标换算准确无误。
+
+    【核心优化】
+    1. 等比例缩放（Downsample）：无论原始屏幕多大（如 4K 或视网膜屏），均将图像比例缩小至最大宽度 1280。
+    2. JPEG 强压缩：使用 quality=80 压缩参数。
+    效果：将动辄 5~10MB 的视网膜屏幕截图暴降至百 KB 级别，上行发送到云端时间微乎其微，同时极大节省了 Token 开销。
     """
     screen = ImageGrab.grab()
-    width, height = screen.size
+    raw_width, raw_height = screen.size
 
-    # 编码为 JPEG Base64（quality=85 是质量与体积的最佳平衡点）
+    # 计算目标缩放尺寸（设定最高宽度阈值为 1280）
+    MAX_WIDTH = 1280
+    if raw_width > MAX_WIDTH:
+        # 等比例缩放计算，保持宽高比
+        ratio = MAX_WIDTH / raw_width
+        target_width = MAX_WIDTH
+        target_height = int(raw_height * ratio)
+
+        try:
+            # Pillow 10+ 推荐使用 Image.Resampling.LANCZOS
+            from PIL import Image
+            resample_filter = Image.Resampling.LANCZOS
+        except AttributeError:
+            # 兼容老版本 Pillow
+            from PIL import Image
+            resample_filter = Image.LANCZOS
+
+        # 进行高质量缩放抗锯齿处理
+        resized_screen = screen.resize((target_width, target_height), resample_filter)
+    else:
+        resized_screen = screen
+
+    # 编码为 JPEG Base64（quality=80 是压缩比与清晰度的最佳实战平衡）
     buffered = io.BytesIO()
-    screen.save(buffered, format="JPEG", quality=85)
+    resized_screen.save(buffered, format="JPEG", quality=80)
     img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-    return img_base64, width, height
+    return img_base64, raw_width, raw_height
 
 
 def get_screen_size() -> tuple:

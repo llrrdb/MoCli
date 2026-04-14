@@ -15,19 +15,12 @@ llm.py - MoCli 大模型对话引擎
 """
 
 import re
-import asyncio
 import logging
 import collections
+import requests
 
 from db import DBManager
 from screen import capture_screen
-
-# 有条件导入 aiohttp
-try:
-    import aiohttp
-    HAS_AIOHTTP = True
-except ImportError:
-    HAS_AIOHTTP = False
 
 logger = logging.getLogger(__name__)
 
@@ -36,39 +29,42 @@ class LLMEngine:
     """大模型对话引擎：截屏 → 构建 Prompt → 请求 → 解析 → 记忆"""
 
     # 内置默认系统提示词（当用户未自定义时使用）
-    DEFAULT_SYSTEM_PROMPT = (
-        "you're MoCli, a friendly always-on companion that lives in the user's menu bar. "
-        "the user is communicating with you and you can see their screen. "
-        "your reply will be spoken aloud via text-to-speech, so write the way you'd actually talk. "
-        "this is an ongoing conversation — you remember everything they've said before.\n\n"
-        "rules:\n"
-        "- default to one or two sentences. be direct and dense. BUT if the user asks you to explain more, go deeper, or elaborate, then go all out.\n"
-        "- all lowercase, casual, warm. no emojis.\n"
-        "- write for the ear, not the eye. short sentences. no lists, bullet points, markdown, or formatting — just natural speech.\n"
-        "- if the user's question relates to what's on their screen, reference specific things you see.\n"
-        "- if the screenshot doesn't seem relevant to their question, just answer the question directly.\n"
-        "- you can help with anything — coding, writing, general knowledge, brainstorming.\n"
-        "- don't read out code verbatim. describe what the code does conversationally.\n"
-        "- focus on giving a thorough, useful explanation.\n\n"
-        "element pointing:\n"
-        "you have a small gray triangle cursor that can fly to and point at things on screen. "
-        "use it whenever pointing would genuinely help the user. "
-        "don't point when it would be pointless — like for general knowledge questions.\n\n"
-        "when you point, append a coordinate tag at the very end of your response, AFTER your spoken text. "
-        "use a NORMALIZED coordinate system where both X and Y range from 0 to 1000. "
-        "the top-left corner is [0,0], the bottom-right corner is [1000,1000], and the center is [500,500]. "
-        "this is independent of the actual screen resolution — always use this 0-1000 scale.\n\n"
-        "format: [POINT:x,y:label] where x,y are integers from 0-1000 (normalized) and label is a short 1-3 word description. "
-        "if pointing wouldn't help, append [POINT:none].\n\n"
-        "examples:\n"
-        '- "you\'ll want to open the color inspector right up in the toolbar. [POINT:430,25:color inspector]"\n'
-        '- "html stands for hypertext markup language, it\'s basically the skeleton of every web page. [POINT:none]"\n'
-    )
+    DEFAULT_SYSTEM_PROMPT = """You are MoCli, a friendly, always-on companion residing in the hidden system tray of the user's Windows taskbar. The user will wake you up using a wake word or the F10 shortcut to communicate with you, accompanied by screen images, so you can see their screen. Your responses will be read aloud via text-to-speech, so please write the way you would actually speak. This is a continuous conversation—you remember everything they've said before.
+
+Rules:
+- Default to one or two sentences. Be direct and information-dense. However, if the user asks you to explain more, dive deeper, or elaborate, go all out—provide a comprehensive, detailed explanation with no length limit.
+- Use all lowercase for English, with a casual and warm tone. Do not use emojis.
+- Write for the ear, not the eye. Use short sentences. Do not use lists, bullet points, Markdown, or formatting—only natural speech.
+- Do not use abbreviations or symbols that sound weird when read aloud. Write "for example" instead of "e.g.", and spell out small numbers.
+- If the user's question relates to what is on their screen, mention the specific things you see.
+- If the screenshot seems irrelevant to their question, just answer the question directly.
+- You can help with anything—programming, writing, general knowledge, brainstorming.
+- Never say "simply" or "just".
+- Do not read code out loud word for word. Describe what the code does or what needs to be changed in a conversational way.
+- Focus on providing comprehensive, useful explanations. Do not end with simple "yes/no" questions like "want me to explain more?" or "should I show you?"—these are dead ends that force the user to just say "yes".
+- Instead, when naturally appropriate, end by "planting a seed"—mention a bigger or more ambitious thing they could try, a deeper related concept, or an advanced tip that builds on what you just explained. Make it something worth pondering, rather than a question that just gets a nod. If the answer itself is already complete, it is perfectly fine not to add anything extra.
+
+Element Pointing:
+You have a small gray triangular cursor that can fly to and point at things on the screen. Use it whenever pointing would genuinely help the user—if they are asking how to do something, looking for a menu, trying to find a button, or need help navigating an app, point to the relevant element. Err on the side of pointing more rather than less, as it makes your help much more useful and specific.
+Do not point aimlessly when it doesn't make sense—for example, if the user asks a general knowledge question, or the conversation is unrelated to what's on the screen, or you are just pointing out obvious things they are already looking at. However, if there is a specific UI element, menu, button, or area on the screen relevant to what you are helping with, point to it.
+
+Examples:
+- User asks how to do color grading in final cut: "you need to open the color inspector—it's in the area on the top right of the toolbar. click that, and you'll see all the color wheels and curves. [POINT:850,42:look here]"
+- User asks what html is: "html stands for hypertext markup language, and it's basically the skeleton of every webpage. curious how it connects with the css you're looking at? [POINT:none]"
+- User asks how to commit code in xcode: "see that source control menu up there? click that and then click commit. [POINT:285,11:source control]"
+
+CRITICAL FORMATTING RULES (STRICT STRICT):
+When you point, YOU MUST append a coordinate tag at the very end of your response, AFTER your spoken text. 
+1. The coordinate system is STRICTLY NORMALIZED to a 0-1000 scale. The top-left corner is [0,0], the bottom-right corner is [1000,1000]. The coordinates X and Y MUST BE integers from 0 to 1000. X and Y CANNOT EXCEED 1000.
+2. 无论你用哪种语言回复，必须在语句的最后忠实保留英文的 [POINT:x,y:label] 格式闭合符号！绝对不能试图翻译 POINT 这个词汇。
+3. Format MUST be exactly: [POINT:x,y:label] or [POINT:none]. Examples of label: "save button", "search bar", "看这里"."""
 
     def __init__(self, db: DBManager):
         self.db = db
         # 短时对话记忆（容量从 DB 动态读取）
         self._update_memory_size()
+        # 初始化持久化连接池（支持 TLS Session 复用）
+        self.http_session = requests.Session()
 
     def _update_memory_size(self):
         """从数据库读取记忆条数并调整 deque 大小"""
@@ -79,7 +75,7 @@ class LLMEngine:
 
     def ask(self, user_text: str) -> dict:
         """
-        完整的 AI 请求流程（同步入口，内部使用 aiohttp 异步请求）。
+        完整的 AI 请求流程（通过持久化 Session 发送 HTTP，复用连接）。
         返回:
             {
                 "spoken_text": str,          # 去掉 POINT 标签后的纯回复文本
@@ -87,19 +83,13 @@ class LLMEngine:
                 "error": str | None          # 错误信息（如果有）
             }
         """
-        if not HAS_AIOHTTP:
-            return {"spoken_text": "", "point": None, "error": "缺失依赖: aiohttp"}
-        return asyncio.run(self._ask_async(user_text))
-
-    async def _ask_async(self, user_text: str) -> dict:
-        """异步执行完整的 AI 请求流程"""
         # 每次请求时刷新记忆容量设定
         self._update_memory_size()
 
         # 1. 截屏
         try:
             img_base64, width, height = capture_screen()
-            logger.info("原生无损物理截图，分辨率: %dx%d", width, height)
+            logger.info("屏幕已压缩截取并编码，对应物理原分辨率: %dx%d", width, height)
         except Exception as e:
             return {"spoken_text": "", "point": None, "error": f"截屏失败: {e}"}
 
@@ -150,30 +140,26 @@ class LLMEngine:
             "max_tokens": 2048
         }
 
-        timeout = aiohttp.ClientTimeout(total=60)
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(url, json=payload, headers=headers) as response:
-                    if response.status != 200:
-                        error_msg = await response.text()
-                        error_msg = error_msg[:500]
-                        logger.error("HTTP %d 请求失败\n接口返回:\n%s",
-                                     response.status, error_msg)
-                        return {
-                            "spoken_text": "",
-                            "point": None,
-                            "error": f"接口拒绝 (HTTP {response.status})"
-                        }
+            response = self.http_session.post(url, json=payload, headers=headers, timeout=60)
+            if response.status_code != 200:
+                error_msg = response.text[:500]
+                logger.error("HTTP %d 请求失败\n接口返回:\n%s", response.status_code, error_msg)
+                return {
+                    "spoken_text": "",
+                    "point": None,
+                    "error": f"接口拒绝 (HTTP {response.status_code})"
+                }
 
-                    result_data = await response.json()
-                    result_text = result_data['choices'][0]['message']['content']
+            result_data = response.json()
+            result_text = result_data['choices'][0]['message']['content']
 
-        except asyncio.TimeoutError:
+        except requests.exceptions.Timeout:
             model_name = self.db.get("model", "未知")
             logger.error("⏰ 请求超时 (60s) | 目标地址: %s | 模型: %s", url, model_name)
             return {"spoken_text": "", "point": None,
                     "error": f"请求超时，模型 {model_name} 未在 60 秒内响应"}
-        except aiohttp.ClientConnectorError as e:
+        except requests.exceptions.ConnectionError as e:
             logger.error("❌ 连接失败: %s", e)
             return {"spoken_text": "", "point": None,
                     "error": "无法连接到大模型服务，请检查地址和服务状态"}

@@ -131,17 +131,19 @@ class TriangleCursor(QWidget):
             Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        # 在 HiDPI 下将逻辑尺寸除以 DPR，保持光标物理尺寸不变
+        # 为了绝对 100% 还原用户最初熟悉的“那个刚刚好的物理大小”：
+        # 我们只在启动时获取一次基于主屏幕的 DPR 来下发统一逻辑尺度，不再让它在跨显示器时自行收缩
         screen = QApplication.primaryScreen()
-        self._dpr = screen.devicePixelRatio() if screen else 1.0
-        self.base_size = int(80 / self._dpr)
-        self.resize(self.base_size, self.base_size)
+        self._init_dpr = screen.devicePixelRatio() if screen else 1.0
+        
+        # 抛弃脆弱的自算逻辑，采用绝对的 FixedSize 强制防止多屏穿梭时的高频 move 引发的尺寸崩塌
+        self.base_size = int(80 / self._init_dpr)
+        self.setFixedSize(self.base_size, self.base_size)
 
-        # 缩放后的绘制中心和半径（适配缩放后的 widget 大小）
-        self._draw_cx = 20 / self._dpr
-        self._draw_cy = 20 / self._dpr
-        self._draw_radius = 11 / self._dpr
+        # 完美还原最初始的画笔缩放计算，但彻底隔离 Qt 系统变量，保持逻辑坐标唯一性
+        self._draw_cx = 20.0 / self._init_dpr
+        self._draw_cy = 20.0 / self._init_dpr
+        self._draw_radius = 11.0 / self._init_dpr
 
     def _build_triangle(self):
         """构建等边三角形的顶点坐标（正旋转 20°）"""
@@ -226,10 +228,24 @@ class TriangleCursor(QWidget):
         self.input_box.textChanged.connect(self._adjust_input_size)
 
     def _init_animation(self):
-        """初始化飞行动画引擎"""
-        self.anim = QPropertyAnimation(self, b"pos")
-        self.anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        """初始化飞行动画引擎：使用 VariantAnimation 以便按帧应用多维变换(位置、旋转、缩放)"""
+        from PyQt6.QtCore import QVariantAnimation, QEasingCurve
+        self.anim = QVariantAnimation(self)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        # InOutSine 提供极其顺滑的加减速启动和停止
+        self.anim.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self.anim.valueChanged.connect(self._on_flight_tick)
         self.anim.finished.connect(self._on_animation_finished)
+
+        # 飞行状态变量
+        self._flight_start = QPointF(0, 0)
+        self._flight_end = QPointF(0, 0)
+        self._flight_control = QPointF(0, 0)
+        self._is_animating = False
+        # 光标默认在几何形态上有一个 110 度（向下偏右）的主朝向！这里必须是 110.0，否则落地瞬间会抽搐
+        self._flight_rotation = 110.0
+        self._flight_scale = 1.0
 
     def _init_timers(self):
         """初始化鼠标追踪和返回定时器"""
@@ -255,13 +271,14 @@ class TriangleCursor(QWidget):
         # 获取呼吸缩放系数 (0.0 to 1.0)
         breath = (math.sin(time.time() * 6) + 1) / 2
         is_circle = False
-        radius_scale = 1.0
+        base_radius_scale = 1.0
+        flight_rot = 0.0
 
         # 根据状态切换颜色与形状
         if self.is_listening:
             is_circle = True
             color = self._color_listening
-            radius_scale = 1.0 + breath * 0.25
+            base_radius_scale = 1.0 + breath * 0.25
         elif self.is_thinking:
             is_circle = True
             color = self._color_thinking
@@ -273,17 +290,20 @@ class TriangleCursor(QWidget):
             g = int(self._color_ai.green() + (self._color_idle.green() - self._color_ai.green()) * t)
             b = int(self._color_ai.blue()  + (self._color_idle.blue()  - self._color_ai.blue())  * t)
             color = QColor(r, g, b)
+            flight_rot = self._flight_rotation # 渐变期间保持由于返回而产生的朝向
         elif self.ai_mode or self.is_returning:
             color = self._color_ai
+            flight_rot = self._flight_rotation
         elif self.is_typing:
             color = self._color_typing
         else:
             color = self._color_idle
 
-        # 使用高分辨率 QPixmap 消除 HiDPI 锯齿
-        dpr = self._dpr
+        # 获取窗体当前所在屏幕的精确动态 DPI！并交给 QPixmap 接管最终的抗锯齿矩阵缩放
+        dpr = self.devicePixelRatioF()
         phys_w = int(self.width() * dpr)
         phys_h = int(self.height() * dpr)
+        
         pixmap = QPixmap(phys_w, phys_h)
         pixmap.setDevicePixelRatio(dpr)
         pixmap.fill(Qt.GlobalColor.transparent)
@@ -291,27 +311,41 @@ class TriangleCursor(QWidget):
         pix_painter = QPainter(pixmap)
         pix_painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
+        # === 核心仿射变换（应用呼吸、飞行缩放与旋转） ===
+        cx = self._draw_cx
+        cy = self._draw_cy
+        total_scale = base_radius_scale * self._flight_scale
+        
+        pix_painter.translate(cx, cy)
+        # _tri_polygon 默认尖端指向 90度（向下）并预旋转了 20 度 = 110度
+        # 当 flight_rot 为方向角时，需减去 110 达到正确的机头指向；为了防止浮点误差导致的不必要旋转使用条件约束
+        if abs(flight_rot - 110.0) > 0.1:
+            pix_painter.rotate(flight_rot - 110.0)
+        if total_scale != 1.0:
+            pix_painter.scale(total_scale, total_scale)
+        pix_painter.translate(-cx, -cy)
+        # ===============================================
+
         # 非待机状态：先画一层柔和暗色光晕底影，增强在相近色背景上的可见性
         is_active = is_circle or self.ai_mode or self.is_returning or self._color_fade_progress is not None
         if is_active:
             shadow_color = QColor(0, 0, 0, 50)  # 半透明黑色
             shadow_pen = QPen(shadow_color)
-            shadow_pen.setWidthF(9.0 / dpr)  # 比主笔画粗一圈
+            # 这里的巧妙之处：除以 _init_dpr 还原原版粗细，除以 total_scale 抵消 painter 的画布放大引擎，从而做到“身体变大，外轮廓永远保持恒定不粗糙”！
+            shadow_pen.setWidthF((9.0 / self._init_dpr) / total_scale)
             shadow_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             shadow_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             pix_painter.setPen(shadow_pen)
             pix_painter.setBrush(Qt.BrushStyle.NoBrush)
             if is_circle:
-                cx = self._draw_cx
-                cy = self._draw_cy
-                r = self._draw_radius * radius_scale
+                r = self._draw_radius
                 pix_painter.drawEllipse(QPointF(cx, cy), r, r)
             else:
                 pix_painter.drawPolygon(self._tri_polygon)
 
         # 主图形绘制
         pen = QPen(color)
-        pen.setWidthF(6.0 / dpr)
+        pen.setWidthF((6.0 / self._init_dpr) / total_scale)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pix_painter.setPen(pen)
@@ -323,9 +357,7 @@ class TriangleCursor(QWidget):
         pix_painter.setBrush(fill_color)
 
         if is_circle:
-            cx = self._draw_cx
-            cy = self._draw_cy
-            r = self._draw_radius * radius_scale
+            r = self._draw_radius
             pix_painter.drawEllipse(QPointF(cx, cy), r, r)
         else:
             pix_painter.drawPolygon(self._tri_polygon)
@@ -396,19 +428,26 @@ class TriangleCursor(QWidget):
         if self.is_listening or self.is_thinking:
             self.update()
 
-        if self.ai_mode or self.is_typing or self.is_returning:
+        # >> 平滑回正角度逻辑与连贯动力学 <<
+        # 降落完全停稳后（不论是抵达了 AI 目标正在朗读，还是返回了鼠标旁），利用高频跳钟将机头顺滑拉回 110 度的完美静止倾角
+        if not getattr(self, '_is_animating', False):
+            diff = (110.0 - self._flight_rotation) % 360.0
+            if diff > 180.0:
+                diff -= 360.0
+            if abs(diff) > 0.5:
+                # 乘数决定回正阻尼，0.08 提供约 0.5 秒极富惯性质感的缓冲刹车摩擦力（承接那遗留的 120 度动能）
+                self._flight_rotation += diff * 0.08  
+                self.update()
+
+        if self.ai_mode or getattr(self, 'is_returning', False) or self.is_typing:
             return
 
         cursor_pos = self.cursor().pos()
         target_x = cursor_pos.x() + 15
         target_y = cursor_pos.y() + 15
 
-        # 检测位移断层，同步状态
-        if abs(self.x() - self.actual_x) > 10 or abs(self.y() - self.actual_y) > 10:
-            self.actual_x = float(self.x())
-            self.actual_y = float(self.y())
-            self.vel_x = 0.0
-            self.vel_y = 0.0
+        # 从此处彻底移除了 self.x() 位移断层校验代码
+        # 将屏幕穿越的最终权利 100% 移交给下方基于 dt (16ms) 的二阶弹簧模型，拒绝死锁。
 
         # 二阶弹簧-阻尼系统，参数读自实例属性（可由设置面板动态刷新）
         response = self._spring_response
@@ -470,14 +509,25 @@ class TriangleCursor(QWidget):
         
         self.ai_mode = True
         self.is_returning = False
+        self._is_animating = True
 
         current = self.pos()
         dist = ((current.x() - x) ** 2 + (current.y() - y) ** 2) ** 0.5
-        fly_ms = int(max(400, min(1200, dist * 0.7)))
+        
+        # [动态时长]：越远越久，边界为 0.6s ~ 1.4s
+        flight_sec = max(0.6, min(1.4, dist / 800.0))
+        fly_ms = int(flight_sec * 1000)
+
+        # [贝塞尔曲线控制点]：起点终点中央，向上抛升（距离的 20%，最大 150 像素高度界限）
+        mid_x = (current.x() + x) / 2.0
+        mid_y = (current.y() + y) / 2.0
+        arc_height = min(dist * 0.2, 150.0)
+        
+        self._flight_start = QPointF(current.x(), current.y())
+        self._flight_end = QPointF(x, y)
+        self._flight_control = QPointF(mid_x, mid_y - arc_height)
 
         self.anim.setDuration(fly_ms)
-        self.anim.setStartValue(current)
-        self.anim.setEndValue(QPoint(x, y))
         self.anim.start()
         self.return_timer.start(fly_ms + dwell_ms)
 
@@ -498,27 +548,75 @@ class TriangleCursor(QWidget):
         """执行返回动作"""
         self.ai_mode = False
         self.is_returning = True
+        self._is_animating = True
         self.pending_return = False
         self._hide_bubble()  # 返回时气泡渐变消失
         
         target = self.cursor().pos()
-        tx, ty = target.x() + 15, target.y() + 15
+        tx = target.x() + 15
+        ty = target.y() + 15
 
         current = self.pos()
         dist = ((current.x() - tx) ** 2 + (current.y() - ty) ** 2) ** 0.5
-        duration = int(max(300, min(1000, dist * 0.6)))
+        
+        # 归位速度稍快，控制在 0.5s ~ 1.0s
+        flight_sec = max(0.5, min(1.0, dist / 800.0))
+        duration = int(flight_sec * 1000)
+
+        # 返回同样走贝塞尔曲线
+        mid_x = (current.x() + tx) / 2.0
+        mid_y = (current.y() + ty) / 2.0
+        arc_height = min(dist * 0.2, 100.0)
+
+        self._flight_start = QPointF(current.x(), current.y())
+        self._flight_end = QPointF(tx, ty)
+        self._flight_control = QPointF(mid_x, mid_y - arc_height)
 
         self.anim.setDuration(duration)
-        self.anim.setStartValue(current)
-        self.anim.setEndValue(QPoint(tx, ty))
         self.anim.start()
 
+    def _on_flight_tick(self, t: float):
+        """每帧触发：根据 t (0.0 -> 1.0) 计算位置、朝向和缩放并更新"""
+        omt = 1.0 - t
+        omt2 = omt * omt
+        t2 = t * t
+
+        # 1. 贝塞尔抛物线坐标
+        bx = omt2 * self._flight_start.x() + 2.0 * omt * t * self._flight_control.x() + t2 * self._flight_end.x()
+        by = omt2 * self._flight_start.y() + 2.0 * omt * t * self._flight_control.y() + t2 * self._flight_end.y()
+
+        # 2. 华丽的空翻特技降落（Barrel Roll）并且保留动画余量
+        # 空中只完成 240 度的翻滚，剩余的 120 度动能交给它“落地后”的原地惯性刹车去自动宣泄
+        spin_t = max(0.0, (t - 0.3) / 0.7)
+        # SmoothStep 缓动函数
+        smoothed_spin = spin_t * spin_t * (3.0 - 2.0 * spin_t)
+        
+        # 判断是往屏幕左边飞还是右边飞，以调整顺逆时针的超视距空翻！
+        if self._flight_end.x() >= self._flight_start.x():
+            self._flight_rotation = 110.0 + smoothed_spin * 240.0
+        else:
+            self._flight_rotation = 110.0 - smoothed_spin * 240.0
+
+        # 3. 立体缩放感（抛物线顶点最大，起降点恢复1.0，最大放大1.3倍）
+        scale_pulse = math.sin(t * math.pi)
+        self._flight_scale = 1.0 + scale_pulse * 0.3
+
+        # 设值并激发布局与绘制刷新
+        self.move(int(bx), int(by))
+        self.update()
+
     def _on_animation_finished(self):
+        self._is_animating = False
         if self.is_returning:
             self.is_returning = False
-            # 启动颜色渐变：蓝色 → 灰色（1 秒过渡）
+            self._flight_scale = 1.0
+            # 启动颜色渐变：蓝色 → 灰色（1 秒过渡），保留最后滞留的方向角直到融合完毕
             self._color_fade_progress = 0.0
             self._color_fade_timer.start()
+        elif self.ai_mode:
+            # 停稳后恢复大小，但绝不瞬间清零角度！通过 _track_mouse 接管并平滑回正
+            self._flight_scale = 1.0
+            self.update()
 
     def _tick_color_fade(self):
         """颜色渐变定时器回调：30ms 一帧，1 秒完成"""
