@@ -8,6 +8,7 @@
 
 <h1 align="center">MoCli</h1>
 <p align="center"><strong>AI‑Powered Desktop Companion with Visual Pointing</strong></p>
+<p align="center"><strong>A local-first, open-source Windows alternative to Clicky.</strong></p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white" />
