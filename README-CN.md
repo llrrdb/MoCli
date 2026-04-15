@@ -1,3 +1,7 @@
+<div align="right">
+  <a href="./README.md">English</a> | <strong>简体中文</strong>
+</div>
+
 <p align="center">
   <img src="static/mocli-logo.svg" alt="MoCli Logo" width="120" />
 </p>

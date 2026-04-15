@@ -278,42 +278,42 @@ Configurations are stored in an SQLite Key-Value database (`mocli.db`) operating
 
 ## 🐛 FAQ
 
-\<details\>
-\<summary\>\<strong\>Q: I don't see the triangle cursor after launching?\</strong\>\</summary\>
+<details\>
+<summary\><strong\>Q: I don't see the triangle cursor after launching?</strong\></summary\>
 
 Make sure to run your terminal with **Administrator privileges**. MoCli requires system-level permissions to create top-level transparent overlay windows.
 
-\</details\>
+</details\>
 
-\<details\>
-\<summary\>\<strong\>Q: Voice wake-up is not working?\</strong\>\</summary\>
+<details\>
+<summary\><strong\>Q: Voice wake-up is not working?</strong\></summary\>
 
 1.  Check if your microphone is exclusively locked by another application.
 2.  Ensure the KWS model directory `sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01` exists in the root folder.
 3.  Verify that "Enable Wake-up" is checked in the Settings panel.
 
-\</details\>
+</details\>
 
-\<details\>
-\<summary\>\<strong\>Q: No sound from TTS?\</strong\>\</summary\>
+<details\>
+<summary\><strong\>Q: No sound from TTS?</strong\></summary\>
 
 1.  Confirm your local TTS service is running and listening on the correct port.
 2.  Check the TTS URL and Model Name in the Settings → Voice Tab.
 3.  Ensure the "Enable Voice Reply" toggle is switched on.
 
-\</details\>
+</details\>
 
-\<details\>
-\<summary\>\<strong\>Q: The cursor points to the wrong location?\</strong\>\</summary\>
+<details\>
+<summary\><strong\>Q: The cursor points to the wrong location?</strong\></summary\>
 
 1.  Use the **Pointing Test** in the Advanced Settings tab (inputting `500,500` should fly exactly to the center of your screen).
 2.  If there is a systematic offset, adjust the **Global Offset** to compensate.
 3.  Ensure you are not using Windows Display Scaling (100% is highly recommended).
 
-\</details\>
+</details\>
 
-\<details\>
-\<summary\>\<strong\>Q: Failed to install `webrtcvad`?\</strong\>\</summary\>
+<details\>
+<summary\><strong\>Q: Failed to install `webrtcvad`?</strong\></summary\>
 
 Ensure your `setuptools` version is below 71:
 
@@ -322,17 +322,18 @@ pip install "setuptools<71"
 pip install webrtcvad
 ```
 
-\</details\>
+</details\>
 
 ---
 
-\<a href="https://star-history.com/\#llrrdb/MoCli\&Date"\>
-\<picture\>
-\<source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=llrrdb/MoCli\&type=Date\&theme=dark" /\>
-\<source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=llrrdb/MoCli\&type=Date" /\>
-\<img alt="Star History Chart" src="https://api.star-history.com/svg?repos=llrrdb/MoCli\&type=Date" /\>
-\</picture\>
-\</a\>
+<a href="https://star-history.com/\#llrrdb/MoCli\&Date"\>
+<picture\>
+
+<source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=llrrdb/MoCli\&type=Date\&theme=dark" /\>
+<source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=llrrdb/MoCli\&type=Date" /\>
+<img alt="Star History Chart" src="https://api.star-history.com/svg?repos=llrrdb/MoCli\&type=Date" /\>
+</picture\>
+</a\>
 
 ## License
 
