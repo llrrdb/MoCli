@@ -30,6 +30,7 @@ ENV/
 .idea/
 *.swp
 *.swo
+.agent/
 
 # --- 操作系统 ---
 .DS_Store
@@ -46,6 +47,7 @@ tests/
 sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01/
 sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/
 models/
+MoCli.zip
 
 # --- 构建产物 ---
 build/
