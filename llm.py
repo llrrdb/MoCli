@@ -17,7 +17,8 @@ llm.py - MoCli 大模型对话引擎
 import re
 import logging
 import collections
-import requests
+import openai
+from openai import OpenAI
 
 from db import DBManager
 from screen import capture_screen
@@ -69,8 +70,6 @@ Special Debug Command:
         self.db = db
         # 短时对话记忆（容量从 DB 动态读取）
         self._update_memory_size()
-        # 初始化持久化连接池（支持 TLS Session 复用）
-        self.http_session = requests.Session()
 
     def _update_memory_size(self):
         """从数据库读取记忆条数并调整 deque 大小"""
@@ -139,46 +138,43 @@ Special Debug Command:
             ]
         })
 
-        # 4. 发起 HTTP 请求
-        url = self.db.get("base_url").strip()
-        if not url.endswith("/chat/completions"):
-            url = url.rstrip("/") + "/chat/completions"
+        # 4. 实例化客户端与清理 URL
+        base_url = self.db.get("base_url").strip()
+        if base_url.endswith("/chat/completions"):
+            base_url = base_url[:-17]  # OpenAI SDK 会自动添加后缀
+        if base_url.endswith("/"):
+            base_url = base_url[:-1]
+            
+        # 若是干净的根地址并且没带 v1，则尝试自动垫高兼容 LM Studio
+        if base_url.count("/") < 3: 
+            logger.warning("请求 URL (%s) 缺少版本号，尝试补充 /v1", base_url)
+            base_url = base_url + "/v1"
 
         api_key = self.db.get("api_key")
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}"
-        }
-        payload = {
-            "model": self.db.get("model"),
-            "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": 4096
-        }
+        if not api_key:
+            api_key = "dummy-key"  # LM Studio 通常也需要提供一个非空键
 
         try:
-            response = self.http_session.post(url, json=payload, headers=headers, timeout=60)
-            if response.status_code != 200:
-                error_msg = response.text[:500]
-                logger.error("HTTP %d 请求失败\n接口返回:\n%s", response.status_code, error_msg)
-                return {
-                    "spoken_text": "",
-                    "point": None,
-                    "error": f"接口拒绝 (HTTP {response.status_code})"
-                }
+            client = OpenAI(base_url=base_url, api_key=api_key)
+            response = client.chat.completions.create(
+                model=self.db.get("model", "unknown-model"),
+                messages=messages,
+                temperature=0.7,
+                max_tokens=4096,
+                timeout=60.0
+            )
+            result_text = response.choices[0].message.content
 
-            result_data = response.json()
-            result_text = result_data['choices'][0]['message']['content']
-
-        except requests.exceptions.Timeout:
-            model_name = self.db.get("model", "未知")
-            logger.error("⏰ 请求超时 (60s) | 目标地址: %s | 模型: %s", url, model_name)
-            return {"spoken_text": "", "point": None,
-                    "error": f"请求超时，模型 {model_name} 未在 60 秒内响应"}
-        except requests.exceptions.ConnectionError as e:
+        except openai.APIConnectionError as e:
             logger.error("❌ 连接失败: %s", e)
-            return {"spoken_text": "", "point": None,
-                    "error": "无法连接到大模型服务，请检查地址和服务状态"}
+            return {"spoken_text": "", "point": None, "error": "无法连接到大模型服务，请检查地址和服务状态"}
+        except openai.APITimeoutError:
+            model_name = self.db.get("model", "未知")
+            logger.error("⏰ 请求超时 (60s) | 模型: %s", model_name)
+            return {"spoken_text": "", "point": None, "error": f"请求超时，模型 {model_name} 未在 60 秒内响应"}
+        except openai.APIStatusError as e:
+            logger.error("API 状态异常: %s", e)
+            return {"spoken_text": "", "point": None, "error": f"接口拒绝 ({e.status_code}): {e.message}"}
         except Exception as e:
             logger.error("请求异常: %s: %s", type(e).__name__, e, exc_info=True)
             return {"spoken_text": "", "point": None, "error": str(e)[:80]}
