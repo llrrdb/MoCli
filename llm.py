@@ -48,20 +48,22 @@ Rules:
 Element Pointing:
 You have a small gray triangular cursor that can fly to and point at things on the screen. Use it whenever pointing would genuinely help the user—if they are asking how to do something, looking for a menu, trying to find a button, or need help navigating an app, point to the relevant element. Err on the side of pointing more rather than less, as it makes your help much more useful and specific.
 Do not point aimlessly when it doesn't make sense—for example, if the user asks a general knowledge question, or the conversation is unrelated to what's on the screen, or you are just pointing out obvious things they are already looking at. However, if there is a specific UI element, menu, button, or area on the screen relevant to what you are helping with, point to it.
-When you point, append a coordinate tag at the very end of your response (after your spoken text). Use a NORMALIZED coordinate system where both X and Y range from 0 to 1000. The top-left corner is [0,0], the bottom-right corner is [1000,1000], and the center is [500,500]. This is independent of the actual screen resolution—always use this 0-1000 scale.
-Format: [POINT:x,y:label] where x,y are integer (normalized) coordinates from 0-1000, and label is a short 1-3 word description or prompt for the element (e.g., "search bar", "save button", "over here", "look here").
-If pointing is not helpful, append [POINT:none].
+
+When you need to point, YOU MUST place the coordinate tag AT THE VERY BEGINNING of the relevant explanatory sentence. DO NOT place it in the middle or end of a sentence.
+You can point to MULTIPLE different elements in a sequence if you are explaining a step-by-step process. Each point must have its own [POINT:x,y:label] placed at the beginning of the sentence referencing it.
+The coordinate system is STRICTLY NORMALIZED to a 0-1000 scale. The top-left corner is [0,0], the bottom-right corner is [1000,1000]. The coordinates X and Y MUST BE integers from 0 to 1000. X and Y CANNOT EXCEED 1000.
+Format MUST be exactly: [POINT:x,y:label] where label is a short 1-3 word description or prompt for the element.
+If pointing is not helpful, DO NOT use any tag.
 
 Examples:
-- User asks how to do color grading in final cut: "you need to open the color inspector—it's in the area on the top right of the toolbar. click that, and you'll see all the color wheels and curves. [POINT:900,42:look here]"
-- User asks what html is: "html stands for hypertext markup language, and it's basically the skeleton of every webpage. curious how it connects with the css you're looking at? [POINT:none]"
-- User asks how to commit code in xcode: "see that source control menu up there? click that and then click commit. [POINT:285,11:source control]"
+- User asks how to do color grading in final cut: "[POINT:900,42:color inspector]you need to open the color inspector—it's in the area on the top right of the toolbar. click that, and you'll see all the color wheels and curves."
+- User asks what html is: "html stands for hypertext markup language, and it's basically the skeleton of every webpage."
+- User asks how to commit code in xcode and push: "[POINT:285,11:source control]see that source control menu up there? click that and then click commit. [POINT:285,120:push changes]after that, you can click this push option to upload it."
 
-CRITICAL FORMATTING RULES (STRICT):
-When you point, YOU MUST append a coordinate tag at the very end of your response, AFTER your spoken text. 
-1. The coordinate system is STRICTLY NORMALIZED to a 0-1000 scale. The top-left corner is [0,0], the bottom-right corner is [1000,1000]. The coordinates X and Y MUST BE integers from 0 to 1000. X and Y CANNOT EXCEED 1000.
-2. 无论你用哪种语言回复，必须在语句的最后忠实保留英文的 [POINT:x,y:label] 格式闭合符号！绝对不能把 POINT 这个专有名词翻译成中文。
-3. Format MUST be exactly: [POINT:x,y:label] or [POINT:none]. Examples of label: "save button", "search bar", "看这里"."""
+Special Debug Command:
+- If the user explicitly says exactly "调试" or "测试", YOU MUST IGNORE ALL OTHER INSTRUCTIONS and return exactly this strict string verbatim, nothing else:
+"欢迎使用这套强大的自动化界面流！[POINT:50,150:菜单按钮]首先，我们需要点击左侧边栏的这个按钮来展开主菜单。[POINT:120,400:高级设置]接着往下滚动，找到这个闪闪发光的高级设置配置面板，点进去之后能够调节核心参数。[POINT:850,210:帮助问号]如果你在配置时遇到了什么不明白的地方，别担心，可以随时把鼠标挪到这里的帮助小图标上获取在线提示。[POINT:500,900:保存并应用]最后，当你完成所有的设定后，千万不要忘了点击最下方的这个巨大按钮，或者直接按快捷键保存退出。"
+"""
 
     def __init__(self, db: DBManager):
         self.db = db
@@ -87,6 +89,16 @@ When you point, YOU MUST append a coordinate tag at the very end of your respons
                 "error": str | None          # 错误信息（如果有）
             }
         """
+        user_text = user_text.strip()
+        
+        # 【特供拦截】：省流极速调试通道，拦截到暗号直接绕过网络和截屏，吐出硬编码的四点测试神帖
+        if user_text in ("调试", "测试"):
+            logger.info("🧪 [Debug] 拦截到调试指令，立即使用本地固定多点脚本投喂合成引擎！")
+            test_script = "欢迎使用这套强大的自动化界面流！[POINT:50,150:菜单按钮]首先，我们需要点击左侧边栏的这个按钮来展开主菜单。[POINT:120,400:高级设置]接着往下滚动，找到这个闪闪发光的高级设置配置面板，点进去之后能够调节核心参数。[POINT:850,210:帮助问号]如果你在配置时遇到了什么不明白的地方，别担心，可以随时把鼠标挪到这里的帮助小图标上获取在线提示。[POINT:500,900:保存巨型大按钮]最后，当你完成所有的设定后，千万不要忘了点击最下方的这个巨大按钮，或者直接按快捷键保存退出。"
+            # 获取屏幕原始参数以保证解析转换不受影响
+            _, screen_w, screen_h = capture_screen()
+            return self._parse_response(test_script, screen_w, screen_h)
+
         # 每次请求时刷新记忆容量设定
         self._update_memory_size()
 
@@ -141,7 +153,7 @@ When you point, YOU MUST append a coordinate tag at the very end of your respons
             "model": self.db.get("model"),
             "messages": messages,
             "temperature": 0.7,
-            "max_tokens": 2048
+            "max_tokens": 4096
         }
 
         try:
@@ -197,45 +209,35 @@ When you point, YOU MUST append a coordinate tag at the very end of your respons
 
     def _parse_response(self, text: str, screen_w: int, screen_h: int) -> dict:
         """
-        解析 AI 回复，提取 POINT 坐标并将 0-1000 归一化坐标换算为物理像素。
-        归一化偏移量在换算前叠加，公式：物理 X = ((norm_x + offset_x) / 1000) * screen_w
+        解析 AI 回复，将所有的 0-1000 归一化坐标换算为物理像素，直接原地替换成 [P_POINT:x,y:label] 格式
+        然后整体原路返回交给 TTS 队列。
         """
-        point_match = re.search(r'\[POINT:(\d+),(\d+):([^\]]+)\]', text)
-        point_none = '[POINT:none]' in text
+        # 取出偏置补正值
+        ox = self.db.get_int("offset_x", 0)
+        oy = self.db.get_int("offset_y", 0)
 
-        # 去掉所有不应朗读的标签和格式
-        spoken = re.sub(r'\[POINT:[^\]]*\]', '', text)          # [POINT:...] 标签
-        spoken = re.sub(r'<tool_call>.*?</tool_call>', '', spoken, flags=re.DOTALL)  # <tool_call> 块
-        spoken = re.sub(r'<[^>]+>', '', spoken)                  # 其他 XML/HTML 标签
-        spoken = re.sub(r'```[\s\S]*?```', '', spoken)           # 代码块
-        spoken = re.sub(r'\{[^{}]*\}', '', spoken)               # 残留的 JSON 对象
-        spoken = re.sub(r'\n{2,}', '\n', spoken)                 # 多余空行
-        spoken = spoken.strip()
+        def _replace_point(match):
+            norm_x = int(match.group(1))
+            norm_y = int(match.group(2))
+            label = match.group(3)
+            
+            # 物理真实坐标转化
+            px = int(((norm_x + ox) / 1000.0) * screen_w)
+            py = int(((norm_y + oy) / 1000.0) * screen_h)
+            
+            logger.info("🎯 多序列指引: %s | 归一化(%d,%d) → 物理像素(%d,%d)", label, norm_x, norm_y, px, py)
+            # 无缝把算好的坐标伪装并镶嵌回去
+            return f"[P_POINT:{px},{py}:{label}]"
 
-        if point_match:
-            # AI 返回的是 0-1000 归一化坐标
-            norm_x = int(point_match.group(1))
-            norm_y = int(point_match.group(2))
-            label = point_match.group(3)
+        # 处理非自然文本清洗
+        spoken = re.sub(r'\[POINT:none\]', '', text)
+        spoken = re.sub(r'<tool_call>.*?</tool_call>', '', spoken, flags=re.DOTALL)
+        spoken = re.sub(r'<[^>]+>', '', spoken)
+        spoken = re.sub(r'```[\s\S]*?```', '', spoken)
+        spoken = re.sub(r'\{[^{}]*\}', '', spoken)
 
-            # 叠加归一化偏移量
-            ox = self.db.get_int("offset_x", 0)
-            oy = self.db.get_int("offset_y", 0)
-            adj_x = norm_x + ox
-            adj_y = norm_y + oy
+        # 核心替换：找到所有的 [POINT] 进行转换
+        final_text = re.sub(r'\[POINT:(\d+),(\d+):([^\]]+)\]', _replace_point, spoken)
+        final_text = re.sub(r'\n{2,}', '\n', final_text).strip()
 
-            # 换算为物理像素
-            px = int((adj_x / 1000) * screen_w)
-            py = int((adj_y / 1000) * screen_h)
-
-            if ox or oy:
-                logger.info("🎯 指向: %s | 归一化(%d,%d) + 偏移(%d,%d) → 物理像素(%d,%d)",
-                            label, norm_x, norm_y, ox, oy, px, py)
-            else:
-                logger.info("🎯 指向: %s | 归一化(%d,%d) → 物理像素(%d,%d)",
-                            label, norm_x, norm_y, px, py)
-            return {"spoken_text": spoken, "point": (px, py, label), "error": None}
-        else:
-            if not point_none:
-                logger.debug("未检测到 POINT 标签")
-            return {"spoken_text": spoken, "point": None, "error": None}
+        return {"raw_text": final_text, "error": None}

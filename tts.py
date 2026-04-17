@@ -40,8 +40,9 @@ class TTSEngine:
     # 断句标点
     PUNCTUATIONS = {"。", "！", "？", "；", ".", "!", "?", "\n"}
 
-    def __init__(self, db):
+    def __init__(self, db, app_signals=None):
         self.db = db
+        self.app_signals = app_signals
         self.is_speaking = False
         self.speaker_queue = None
         self._tts_state_callback = None  # 可选：TTS 状态回调
@@ -76,25 +77,51 @@ class TTSEngine:
         )
 
     async def speaker_loop(self, out_stream):
-        """持续从播放队列取出 PCM 数据并输出到扬声器"""
+        """持续从播放队列取出事件或 PCM 数据（消费者）"""
+        current_label = ""
+        
         try:
             while True:
                 try:
                     chunk = await self.speaker_queue.get()
                     if chunk is None:
-                        # 哨兵值：一段语音播放结束
-                        await asyncio.sleep(0.3)
+                        # 哨兵值：播放结束触发光标返回
+                        # 给最后的话音留 2 秒缓冲
+                        await asyncio.sleep(2.0)
                         self.is_speaking = False
                         if self._tts_state_callback:
                             self._tts_state_callback(False)
+                        if self.app_signals:
+                            self.app_signals.cursor_return.emit()
+                        
+                        # 【重要修复】：重置标签状态机，防止上一轮对话的最后一个点位名称残留到下一轮开头
+                        current_label = ""
                         continue
-                    await asyncio.to_thread(out_stream.write, chunk)
+                        
+                    if isinstance(chunk, dict):
+                        # 处理 UI 同步指令事件
+                        if chunk["type"] == "sync_text":
+                            if self.app_signals:
+                                text_content = chunk["content"]
+                                display_str = f"🎯 {current_label}\n\n💬 {text_content}"
+                                self.app_signals.bubble_sync.emit(display_str)
+                                
+                        elif chunk["type"] == "point":
+                            current_label = chunk["label"]
+                            logger.info("队列弹出目标: 飞往 %s (%d, %d)", current_label, chunk['x'], chunk['y'])
+                            if self.app_signals:
+                                self.app_signals.cursor_fly_and_hold.emit(chunk["x"], chunk["y"], current_label)
+                                
+                    else:
+                        # 真实的音频块，调用系统的扬声器驱动
+                        if out_stream and not out_stream.is_stopped():
+                            await asyncio.to_thread(out_stream.write, chunk)
+                            
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
                     logger.error("播放异常: %s", e)
         finally:
-            # 清理 aiohttp Session
             if self._session and not self._session.closed:
                 await self._session.close()
 
@@ -107,7 +134,7 @@ class TTSEngine:
             asyncio.run_coroutine_threadsafe(self._speak(text), loop)
 
     async def _speak(self, text: str):
-        """将文本按标点分句后逐句发起 TTS 合成"""
+        """解析文本结构，按序请求语音并派发协调指令（生产者）"""
         text = text.strip()
         if not text:
             return
@@ -116,39 +143,65 @@ class TTSEngine:
         if self._tts_state_callback:
             self._tts_state_callback(True)
 
-        # 从 SQLite 实时读取 TTS 配置
+        tts_enabled = self.db.get_bool("tts_enabled")
         tts_url = self.db.get("tts_url") or "http://localhost:8100/v1/audio/speech"
         tts_model = self.db.get("tts_model") or "model-base"
 
-        # 按标点分句
-        sentences = self._split_sentences(text)
+        # 使用正则表达式剥离提取 P_POINT 控制事件和伴随文字
+        events = self._parse_text_sequence(text)
 
-        # 逐句请求 TTS 并流式播放
-        for sentence in sentences:
-            clean = self._clean_for_tts(sentence)
-            if not clean:
-                continue
-            await self._request_stream(tts_url, tts_model, clean)
+        # 逐段遍历压入队列
+        for event in events:
+            if event["type"] == "text":
+                content = event["content"]
+                # 塞入：即将开始朗读文字的同步 UI 更新信号
+                if self.speaker_queue:
+                    await self.speaker_queue.put({"type": "sync_text", "content": content})
+                
+                # 请求语音字节 / 降级模拟睡眠
+                clean = self._clean_for_tts(content)
+                if clean:
+                    if tts_enabled and HAS_AIOHTTP and self.open_speaker:  # 若音频可用，则真的去求合成
+                        await self._request_stream(tts_url, tts_model, clean)
+                    else:
+                        # 兜底：如果没开语音合成，那就按一秒大约 4 个字的阅读速度进行 dummy Sleep 模拟
+                        delay = max(1.0, len(clean) * 0.25)
+                        logger.info("已跳过语音合成，按字数模拟延时 %.1fs: %s", delay, clean)
+                        await asyncio.sleep(delay)
+                        
+            elif event["type"] == "point":
+                if self.speaker_queue:
+                    await self.speaker_queue.put(event)
 
-        # 发送结束哨兵
+        # 发送一段连续问答流程结束哨兵
         if self.speaker_queue:
             await self.speaker_queue.put(None)
 
-    def _split_sentences(self, text: str) -> list:
-        """按中英文标点分句"""
-        sentences = []
-        current = []
-        for char in text:
-            current.append(char)
-            if char in self.PUNCTUATIONS:
-                s = "".join(current).strip()
-                if s:
-                    sentences.append(s)
-                current = []
-        remainder = "".join(current).strip()
-        if remainder:
-            sentences.append(remainder)
-        return sentences
+    def _parse_text_sequence(self, full_text: str):
+        """将长文本中的 [P_POINT:x,y:标题] 与自然语句分离排队"""
+        pattern = r'(\[P_POINT:\d+,\d+:[^\]]+\])'
+        parts = re.split(pattern, full_text)
+        
+        sequence = []
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            match = re.match(r'\[P_POINT:(\d+),(\d+):([^\]]+)\]', part)
+            if match:
+                # 若因点位导致劈开了完整短语，强制在上一段短语末尾塞入逗号让大模型喘息
+                if sequence and sequence[-1]["type"] == "text" and not sequence[-1]["content"].strip().endswith(("，", "。", "！", "？", "：", "”")):
+                    sequence[-1]["content"] = sequence[-1]["content"].rstrip() + "，"
+
+                sequence.append({
+                    "type": "point",
+                    "x": int(match.group(1)),
+                    "y": int(match.group(2)),
+                    "label": match.group(3)
+                })
+            else:
+                sequence.append({"type": "text", "content": part})
+        return sequence
 
     @staticmethod
     def _clean_for_tts(text: str) -> str:
@@ -163,7 +216,6 @@ class TTSEngine:
         """向 TTS API 发起流式 PCM 合成请求（复用 aiohttp Session）"""
         payload = {"model": model, "input": text, "response_format": "pcm"}
         try:
-            # 复用持久化 Session，避免每句都创建新连接
             session = self._session
             if session is None or session.closed:
                 session = aiohttp.ClientSession()

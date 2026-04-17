@@ -94,11 +94,11 @@ class TriangleCursor(QWidget):
 
         # ─── 光标外观参数（硬编码，修改后重启程序生效） ───
         # 弹簧自然周期（秒）：越小越灵敏紧跟（0.15 极紧 | 0.3 灵敏 | 0.5 平衡 | 0.8 慢悠）
-        self._spring_response      = 0.3
+        self._spring_response      = 0.4
         # 阻尼比：< 1 有弹性回弹（0.4 弹跃感 | 0.6 平衡 | 1.0 无回弹临界阻尼）
-        self._damping_fraction     = 0.7
+        self._damping_fraction     = 0.6
         # 整体透明度（0.0 全透明 ~ 1.0 不透明）
-        self._opacity              = 0.6
+        self._opacity              = 0.7
         # 各状态颜色（修改此处即可自定义，格式 QColor(R, G, B)）
         self._color_idle           = QColor(40, 44, 52)      # 待机（暗灰）
         self._color_ai             = QColor(0, 200, 255)     # AI 飞行指向（青色）
@@ -482,8 +482,39 @@ class TriangleCursor(QWidget):
     # 飞行动画
     # ==========================================
 
+    def _fly_and_hold(self, px: int, py: int, label: str):
+        """飞向目标坐标并无限驻留，不触发自动返回。接收物理像素。"""
+        # 气泡显示由 tts.py 的 sync_text 统一驱动，此处不再重复刷新
+
+        # 物理像素 → 逻辑像素
+        lx, ly = self._physical_to_logical(px, py)
+        
+        # 停掉上一轮残留
+        self.return_timer.stop()
+        self.anim.stop()
+        self.hide_timer.stop()
+        
+        self.ai_mode = True
+        self.is_returning = False
+        self._is_animating = True
+
+        current = self.pos()
+        dist = ((current.x() - lx) ** 2 + (current.y() - ly) ** 2) ** 0.5
+        flight_sec = max(0.6, min(1.4, dist / 800.0))
+        
+        mid_x = (current.x() + lx) / 2.0
+        mid_y = (current.y() + ly) / 2.0
+        arc_height = min(dist * 0.2, 150.0)
+
+        self._flight_start = QPointF(current.x(), current.y())
+        self._flight_end = QPointF(lx, ly)
+        self._flight_control = QPointF(mid_x, mid_y - arc_height)
+
+        self.anim.setDuration(int(flight_sec * 1000))
+        self.anim.start()
+
     def ai_move_to(self, x: int, y: int):
-        """让三角形飞向指定屏幕坐标（接收物理像素，自动转换为逻辑像素）"""
+        """（已废弃被保留用于向下兼容单点指令）"""
         lx, ly = self._physical_to_logical(x, y)
         self._fly_to(lx, ly, dwell_ms=4000)
 

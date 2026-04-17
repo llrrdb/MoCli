@@ -30,6 +30,7 @@ ENV/
 .idea/
 *.swp
 *.swo
+.agents/
 
 # --- 操作系统 ---
 .DS_Store
@@ -41,11 +42,13 @@ mocli.db*
 my_keywords.txt
 *.log
 tests/
+models/
 
 # --- 语音识别/大模型 (体积巨大，不建议提交) ---
 sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01/
 sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/
 models/
+MoCli.zip
 
 # --- 构建产物 ---
 build/
