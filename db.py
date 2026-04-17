@@ -48,6 +48,15 @@ class DBManager:
             '''CREATE TABLE IF NOT EXISTS settings
                (key TEXT PRIMARY KEY, value TEXT)'''
         )
+        # 聊天记录表（持久化所有对话，语音 + 文字统一存储）
+        self.cursor.execute(
+            '''CREATE TABLE IF NOT EXISTS chat_messages (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   role TEXT NOT NULL,
+                   content TEXT NOT NULL,
+                   timestamp REAL NOT NULL
+               )'''
+        )
         self.conn.commit()
 
         # 默认配置项
@@ -110,3 +119,39 @@ class DBManager:
             return int(self.get(key, str(default)))
         except ValueError:
             return default
+
+    # ==========================================
+    # 聊天记录持久化
+    # ==========================================
+
+    def save_chat_message(self, role: str, content: str) -> None:
+        """保存一条聊天消息到数据库（线程安全）"""
+        import time
+        with self._db_lock:
+            self.cursor.execute(
+                "INSERT INTO chat_messages (role, content, timestamp) VALUES (?, ?, ?)",
+                (role, content, time.time())
+            )
+            self.conn.commit()
+
+    def get_chat_history(self, limit: int = 200) -> list:
+        """获取最近的聊天记录（按时间正序返回）"""
+        with self._db_lock:
+            self.cursor.execute(
+                "SELECT role, content, timestamp FROM chat_messages "
+                "ORDER BY id DESC LIMIT ?",
+                (limit,)
+            )
+            rows = self.cursor.fetchall()
+        # 翻转为时间正序（旧 → 新）
+        return [
+            {"role": r[0], "content": r[1], "timestamp": r[2]}
+            for r in reversed(rows)
+        ]
+
+    def clear_chat_history(self) -> None:
+        """清空所有聊天记录（线程安全）"""
+        with self._db_lock:
+            self.cursor.execute("DELETE FROM chat_messages")
+            self.conn.commit()
+        logger.info("聊天记录已清空")

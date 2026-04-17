@@ -193,6 +193,13 @@ Special Debug Command:
         self.history.append({"role": "user", "content": user_text})
         self.history.append({"role": "assistant", "content": result_text})
 
+        # 8. 持久化到数据库（供聊天历史页面查看）
+        try:
+            self.db.save_chat_message("user", user_text)
+            self.db.save_chat_message("assistant", result_text)
+        except Exception as e:
+            logger.warning("持久化聊天记录失败: %s", e)
+
         return result
 
     def _build_system_prompt(self, width: int, height: int) -> str:

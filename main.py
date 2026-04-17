@@ -118,8 +118,6 @@ class MoCli:
 
     def _connect_signals(self):
         """连接所有跨模块信号"""
-        # 键盘输入 → AI
-        self.cursor.input_submitted.connect(self._on_user_input)
 
         # 语音输入 → AI
         self.voice_signals.stt_result.connect(self._on_user_input)
@@ -214,7 +212,7 @@ class MoCli:
             self._settings_win.raise_()
             self._settings_win.activateWindow()
             return
-        self._settings_win = SettingsWindow(triangle_cursor=self.cursor)
+        self._settings_win = SettingsWindow(triangle_cursor=self.cursor, llm_engine=self.llm)
         self._settings_win.destroyed.connect(lambda: setattr(self, '_settings_win', None))
         self._settings_win.show()
 

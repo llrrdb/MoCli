@@ -19,7 +19,7 @@ import time
 import ctypes
 import ctypes.wintypes
 
-from PyQt6.QtWidgets import QWidget, QLabel, QLineEdit, QStyle, QStyleOption, QApplication
+from PyQt6.QtWidgets import QWidget, QLabel, QStyle, QStyleOption, QApplication
 from PyQt6.QtCore import (
     Qt, QTimer, pyqtSignal, QPropertyAnimation,
     QEasingCurve, QPoint, QPointF
@@ -73,15 +73,11 @@ class TriangleCursor(QWidget):
     包含弹簧物理跟随、飞行动画、气泡显示和文本输入功能。
     """
 
-    # 用户通过键盘输入框提交文字时发射
-    input_submitted = pyqtSignal(str)
-
     def __init__(self, parent=None):
         super().__init__(parent)
 
         # 状态标志
         self.ai_mode = False
-        self.is_typing = False
         self.is_returning = False
         self.is_listening = False
         self.is_thinking = False
@@ -102,14 +98,12 @@ class TriangleCursor(QWidget):
         # 各状态颜色（修改此处即可自定义，格式 QColor(R, G, B)）
         self._color_idle           = QColor(40, 44, 52)      # 待机（暗灰）
         self._color_ai             = QColor(0, 200, 255)     # AI 飞行指向（青色）
-        self._color_typing         = QColor(255, 170, 0)     # 文本输入中（橙色）
         self._color_listening      = QColor(0, 220, 100)     # 聆听中（绿色）
         self._color_thinking       = QColor(160, 50, 255)    # 思考推理中（紫色）
 
         self._init_window()
         self._build_triangle()
         self._init_bubble()
-        self._init_input_box()
         self._init_animation()
         self._init_timers()
 
@@ -202,31 +196,6 @@ class TriangleCursor(QWidget):
         self.hide_timer.timeout.connect(self._hide_bubble)
         self.pending_hide = False
 
-    def _init_input_box(self):
-        """初始化文本输入框"""
-        self.input_box = QLineEdit(self)
-        self.input_box.setWindowFlags(
-            Qt.WindowType.Tool |
-            Qt.WindowType.FramelessWindowHint |
-            Qt.WindowType.WindowStaysOnTopHint
-        )
-        self.input_box.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        # 输入框字体加粗（Light -> Medium）
-        self.input_box.setFont(QFont("Microsoft YaHei UI", 11, QFont.Weight.Medium))
-        self.input_box.setPlaceholderText("在此输入指令...")
-        self.input_box.setStyleSheet("""
-            QLineEdit {
-                color: #FFFFFF;
-                background-color: rgba(30, 33, 39, 240);
-                border: 2px solid #00C8FF;
-                border-radius: 8px;
-                padding: 5px 10px;
-            }
-        """)
-        self.input_box.hide()
-        self.input_box.returnPressed.connect(self._submit_input)
-        self.input_box.textChanged.connect(self._adjust_input_size)
-
     def _init_animation(self):
         """初始化飞行动画引擎：使用 VariantAnimation 以便按帧应用多维变换(位置、旋转、缩放)"""
         from PyQt6.QtCore import QVariantAnimation, QEasingCurve
@@ -294,8 +263,6 @@ class TriangleCursor(QWidget):
         elif self.ai_mode or self.is_returning:
             color = self._color_ai
             flight_rot = self._flight_rotation
-        elif self.is_typing:
-            color = self._color_typing
         else:
             color = self._color_idle
 
@@ -365,7 +332,7 @@ class TriangleCursor(QWidget):
         pix_painter.end()
 
         # 待机态透明度微呼吸（Δ±0.1，节奏缓慢）
-        if not (self.is_listening or self.is_thinking or self.ai_mode or self.is_returning or self.is_typing or self._color_fade_progress is not None):
+        if not (self.is_listening or self.is_thinking or self.ai_mode or self.is_returning or self._color_fade_progress is not None):
             idle_breath = (math.sin(time.time() * 2) + 1) / 2  # 0~1，周期约 3 秒
             opacity = self._opacity - 0.1 + 0.2 * idle_breath
         else:
@@ -377,7 +344,6 @@ class TriangleCursor(QWidget):
         super().showEvent(event)
         _setup_dwm_window(int(self.winId()))
         _setup_dwm_window(int(self.text_label.winId()))
-        _setup_dwm_window(int(self.input_box.winId()))
 
     def moveEvent(self, event):
         """主窗口移动时，同步更新独立气泡的绝对坐标，防止超出屏幕"""
@@ -414,7 +380,6 @@ class TriangleCursor(QWidget):
                 widget.move(int(tx), int(ty))
 
         _move_clamped(self.text_label)
-        _move_clamped(self.input_box)
 
 
 
@@ -439,7 +404,7 @@ class TriangleCursor(QWidget):
                 self._flight_rotation += diff * 0.08  
                 self.update()
 
-        if self.ai_mode or getattr(self, 'is_returning', False) or self.is_typing:
+        if self.ai_mode or getattr(self, 'is_returning', False):
             return
 
         cursor_pos = self.cursor().pos()
@@ -454,7 +419,7 @@ class TriangleCursor(QWidget):
         damping_fraction = self._damping_fraction
         dt = 0.016  # 帧步长 ≈ 16ms (60 FPS)
 
-        # 将 SwiftUI 参数转换为离散域的角频率和阻尼系数
+        # 转换为离散域的角频率和阻尼系数
         omega_n = 2.0 * math.pi / response          # 自然角频率
         k = omega_n * omega_n                        # 弹簧刚度 (ω²)
         c = 2.0 * damping_fraction * omega_n         # 阻尼系数 (2ζω)
@@ -565,10 +530,6 @@ class TriangleCursor(QWidget):
 
     def _start_return(self):
         """飞行结束（或等待 TTS 结束）后返回鼠标位置"""
-        if self.is_typing:
-            self.ai_mode = False
-            return
-
         if self.is_tts_speaking:
             # 如果设定时间到了 TTS 还在读，则挂起，等 TTS 读完再返航
             self.pending_return = True
@@ -741,40 +702,3 @@ class TriangleCursor(QWidget):
             self.fade_in_anim.stop()
             self.fade_out_anim.setStartValue(self.text_label.windowOpacity())
             self.fade_out_anim.start()
-
-    # ==========================================
-    # 文本输入框
-    # ==========================================
-
-    def prepare_input(self):
-        """弹出文本输入框（由 Ctrl+M 触发）"""
-        self.is_typing = True
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
-        self.hide_timer.stop()
-        self.text_label.hide()
-        self.input_box.clear()
-        self._adjust_input_size()
-        self.input_box.show()
-        self.activateWindow()
-        self.raise_()
-        QTimer.singleShot(50, self.input_box.setFocus)
-        self.update()
-
-    def _submit_input(self):
-        """提交输入框内容"""
-        text = self.input_box.text().strip()
-        self.input_box.hide()
-        self.is_typing = False
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-
-        if text:
-            self.input_submitted.emit(text)
-
-    def _adjust_input_size(self):
-        text = self.input_box.text()
-        fm = QFontMetrics(self.input_box.font())
-        text_w = fm.horizontalAdvance(text) + 50
-        new_w = max(250, min(text_w, 800))
-        self.input_box.resize(new_w, 36)
-        # 更新对齐
-        self._sync_overlays()
