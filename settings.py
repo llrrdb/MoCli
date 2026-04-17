@@ -16,14 +16,14 @@ import threading
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
-    QFrame, QApplication, QTextBrowser, QMessageBox
+    QFrame, QApplication, QTextBrowser, QMessageBox, QComboBox
 )
 from PyQt6.QtCore import Qt, QTimer, QEvent, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon, QCursor, QPainter, QColor, QPen
 
 from qfluentwidgets import (
     MSFluentWindow, FluentIcon, SubtitleLabel, BodyLabel,
-    LineEdit, PrimaryPushButton, PushButton,
+    LineEdit, PrimaryPushButton, PushButton, ComboBox,
     SwitchButton, Slider, TextEdit,
     ScrollArea, InfoBar, InfoBarPosition,
     NavigationItemPosition, setFont
@@ -99,6 +99,8 @@ class FluentCard(QFrame):
 
 class LLMPage(ScrollArea):
     """大模型引擎配置页面"""
+    # 跨线程安全信号：用于子线程将测试结果回传到 UI 主线程
+    _test_signal = pyqtSignal(bool, str)
 
     def __init__(self, db: DBManager, parent=None):
         super().__init__(parent)
@@ -115,14 +117,59 @@ class LLMPage(ScrollArea):
         self.lay.setSpacing(20)
         self.setWidget(content)
 
+        # 连接跨线程回调信号
+        self._test_signal.connect(self._on_test_done)
+
         self._build()
 
     def _build(self):
+        # 预设集合
+        self.preset_providers = {
+            "Google (Gemini)": {"url": "", "model": "gemini/gemini-2.0-flash"},
+            "阿里云百炼 (Qwen)": {"url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "qwen-vl-max"},
+            "OpenAI (ChatGPT)": {"url": "https://api.openai.com/v1", "model": "gpt-4o-mini"},
+            "Anthropic (Claude)": {"url": "", "model": "anthropic/claude-3-7-sonnet-20250219"},
+            "智谱 AI (GLM)": {"url": "https://open.bigmodel.cn/api/paas/v4", "model": "glm-4v"},
+            "本地或跨平台代理 (LM Studio/Ollama)": {"url": "http://127.0.0.1:1234/v1", "model": "local-model"},
+            "【自定义 / 第三方兼容】": {"url": "", "model": ""}
+        }
+
         # 卡片1：API 连接配置
-        c1 = FluentCard("API 连接配置", "配置与大语言模型 (VLM) 服务的通信参数。")
+        c1 = FluentCard("API 连接配置", "配置与大语言模型 (VLM) 服务的通信参数。选择预设平台体验自动回填。")
+
+        self.provider_combo = QComboBox()
+        self.provider_combo.setStyleSheet("""
+            QComboBox {
+                border: 1px solid rgba(0, 0, 0, 0.073);
+                border-radius: 5px;
+                padding: 6px 12px;
+                background-color: rgba(255, 255, 255, 0.7);
+                font-family: "Microsoft YaHei", sans-serif;
+                font-size: 14px;
+                min-height: 24px;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+        """)
+        for k in self.preset_providers.keys():
+            self.provider_combo.addItem(k)
+        
+        # 尝试通过当前的 base_url 倒推匹配当前的 provider 下拉列表位置
+        current_url = self.db.get("base_url", "")
+        matched_idx = list(self.preset_providers.keys()).index("【自定义 / 第三方兼容】")
+        for i, (k, v) in enumerate(self.preset_providers.items()):
+            if v["url"] and current_url == v["url"]:
+                matched_idx = i
+                break
+        self.provider_combo.setCurrentIndex(matched_idx)
+        self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
+        c1.add_row("平台预设 (Provider)", self.provider_combo)
+        c1.add_divider()
+
         self.url_input = LineEdit()
         self.url_input.setText(self.db.get("base_url"))
-        self.url_input.setPlaceholderText("https://api.example.com/v1/chat/completions")
+        self.url_input.setPlaceholderText("https://api.example.com/v1")
         c1.add_row("Base URL（端点地址）", self.url_input)
         c1.add_divider()
 
@@ -137,8 +184,125 @@ class LLMPage(ScrollArea):
         self.api_key_input.setEchoMode(LineEdit.EchoMode.Password)
         self.api_key_input.setPlaceholderText("sk-xxxxxxxxxxxxxxxxxxxxxxxx")
         c1.add_row("API 密钥 (API Key)", self.api_key_input)
+        c1.add_divider()
+
+        self.test_btn = PrimaryPushButton("测试连接验证")
+        self.test_btn.clicked.connect(self._test_connection)
+        
+        btn_ly = QHBoxLayout()
+        btn_ly.addStretch()
+        btn_ly.addWidget(self.test_btn)
+        c1.add_layout(btn_ly)
+        
         self.lay.addWidget(c1)
 
+        # 构建剩余卡片（对话记忆 + 系统提示词）
+        self._build_card2_and_card3()
+
+    def _on_provider_changed(self, idx):
+        provider_name = self.provider_combo.currentText()
+        preset = self.preset_providers.get(provider_name)
+        if preset and provider_name != "【自定义 / 第三方兼容】":
+            if preset["url"]:
+                self.url_input.setText(preset["url"])
+            else:
+                self.url_input.clear()
+            
+            # 使用原生自带 URL 时清空占位
+            if not preset["url"]:
+                self.url_input.setPlaceholderText("该平台由客户端原生支持，通常无需填写 Base URL")
+            else:
+                self.url_input.setPlaceholderText("https://api.example.com/v1")
+
+            if preset["model"]:
+                self.model_input.setText(preset["model"])
+
+        elif provider_name == "【自定义 / 第三方兼容】":
+            self.url_input.setPlaceholderText("请输入第三方接口基地址 (应当包含 /v1)")
+
+    def _test_connection(self):
+        """发起对该设定的临时握手网络测速连接"""
+        self.test_btn.setEnabled(False)
+        self.test_btn.setText("测试通讯中...")
+        InfoBar.info(
+            title="请求已发出",
+            content="LiteLLM 正在向选定的大模型下发握手握手，请耐心等待...",
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=3000,
+            parent=self.window()
+        )
+
+        test_url = self.url_input.text().strip()
+        test_key = self.api_key_input.text().strip()
+        test_model = self.model_input.text().strip()
+
+        # 剥离主线程开子线程做 HTTP 连接，不阻塞 UI 动效滚动
+        def worker():
+            import litellm
+            from litellm import completion
+            try:
+                # 路由逻辑与 llm.py 保持一致
+                model_route = test_model or "undefined"
+                if test_url:
+                    # 有 base_url 时: 走 openai 兼容通道，剥离非标前缀
+                    if "/" in model_route:
+                        model_route = model_route.split("/", 1)[1]
+                    model_route = f"openai/{model_route}"
+                    
+                kwargs = {
+                    "model": model_route,
+                    "messages": [{"role": "user", "content": "你好，这是一条连接测试消息，请你仅回复“连接成功”这四个字，不需要其他废话。"}],
+                    "temperature": 0.1,
+                    "max_tokens": 15
+                }
+                
+                # 兼容虚假凭据（像 Ollama 这种没密码的）
+                if test_key:
+                    kwargs["api_key"] = test_key
+                else:
+                    kwargs["api_key"] = "dummy"
+
+                if test_url:
+                    kwargs["api_base"] = test_url
+
+                response = completion(**kwargs)
+                res_text = response.choices[0].message.content
+                self._test_signal.emit(True, res_text)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                self._test_signal.emit(False, str(e))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_test_done(self, success, msg):
+        self.test_btn.setEnabled(True)
+        self.test_btn.setText("测试连接验证")
+        if success:
+            InfoBar.success(
+                title="接口测试完美通过！",
+                content=f"AI 服务端已正确握手返回：{msg}",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=4000,
+                parent=self.window()
+            )
+        else:
+            InfoBar.error(
+                title="抱歉，通道连接异常中断",
+                content=f"错误反馈栈：{msg}",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=0,
+                parent=self.window()
+            )
+
+    def _build_card2_and_card3(self):
+        """构建对话记忆和系统提示词卡片（由 _build 调用）"""
         # 卡片2：对话记忆
         c2 = FluentCard("对话记忆", "设定 AI 可以回忆的最近历史对话轮数。数值越大，消耗 Token 越多。")
         mem_val = self.db.get_int("memory_size")

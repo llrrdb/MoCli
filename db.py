@@ -61,9 +61,9 @@ class DBManager:
 
         # 默认配置项
         defaults = {
-            "base_url": "http://127.0.0.1:1234/v1/chat/completions",
-            "model": "qwen/qwen2.5-vl-7b",
-            "api_key": "lm-studio",
+            "base_url": "",
+            "model": "gemini-3-flash-preview",
+            "api_key": "YOU_API_KEY",
             "tts_url": "http://localhost:8100/v1/audio/speech",
             "tts_model": "model-base",
             "wakeup_enabled": "true",

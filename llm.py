@@ -17,8 +17,7 @@ llm.py - MoCli 大模型对话引擎
 import re
 import logging
 import collections
-import openai
-from openai import OpenAI
+import litellm
 
 from db import DBManager
 from screen import capture_screen
@@ -138,46 +137,43 @@ Special Debug Command:
             ]
         })
 
-        # 4. 实例化客户端与清理 URL
+        # 4. 组装参数与下发请求
         base_url = self.db.get("base_url").strip()
-        if base_url.endswith("/chat/completions"):
-            base_url = base_url[:-17]  # OpenAI SDK 会自动添加后缀
-        if base_url.endswith("/"):
-            base_url = base_url[:-1]
+        model_str = self.db.get("model", "unknown-model").strip()
+        
+        # [关键路由]：只要用户填了自定义 base_url（非空），说明走的是兼容接口，
+        # 需要无条件使用 openai/ 前缀。先剥离任何可能存在的非标准前缀（如 qwen/），再统一添加 openai/。
+        # 如果 base_url 为空，则保留原始 model_str（如 gemini/xxx、anthropic/xxx），由 LiteLLM 原生路由。
+        if base_url:
+            # 剥离现有的非法前缀（如 qwen/xxx → xxx）
+            if "/" in model_str:
+                model_str = model_str.split("/", 1)[1]
+            model_str = f"openai/{model_str}"
             
-        # 若是干净的根地址并且没带 v1，则尝试自动垫高兼容 LM Studio
-        if base_url.count("/") < 3: 
-            logger.warning("请求 URL (%s) 缺少版本号，尝试补充 /v1", base_url)
-            base_url = base_url + "/v1"
+        kwargs = {
+            "model": model_str,
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": 4096,
+            "timeout": 60.0
+        }
 
         api_key = self.db.get("api_key")
-        if not api_key:
-            api_key = "dummy-key"  # LM Studio 通常也需要提供一个非空键
+        if api_key:
+            kwargs["api_key"] = api_key
+        else:
+            kwargs["api_key"] = "dummy-key"  # 本地代理常需假占位符
+
+        if base_url:
+            kwargs["api_base"] = base_url
 
         try:
-            client = OpenAI(base_url=base_url, api_key=api_key)
-            response = client.chat.completions.create(
-                model=self.db.get("model", "unknown-model"),
-                messages=messages,
-                temperature=0.7,
-                max_tokens=4096,
-                timeout=60.0
-            )
+            response = litellm.completion(**kwargs)
             result_text = response.choices[0].message.content
 
-        except openai.APIConnectionError as e:
-            logger.error("❌ 连接失败: %s", e)
-            return {"spoken_text": "", "point": None, "error": "无法连接到大模型服务，请检查地址和服务状态"}
-        except openai.APITimeoutError:
-            model_name = self.db.get("model", "未知")
-            logger.error("⏰ 请求超时 (60s) | 模型: %s", model_name)
-            return {"spoken_text": "", "point": None, "error": f"请求超时，模型 {model_name} 未在 60 秒内响应"}
-        except openai.APIStatusError as e:
-            logger.error("API 状态异常: %s", e)
-            return {"spoken_text": "", "point": None, "error": f"接口拒绝 ({e.status_code}): {e.message}"}
         except Exception as e:
-            logger.error("请求异常: %s: %s", type(e).__name__, e, exc_info=True)
-            return {"spoken_text": "", "point": None, "error": str(e)[:80]}
+            logger.error("API 侧响应异常: %s: %s", type(e).__name__, e, exc_info=True)
+            return {"spoken_text": "", "point": None, "error": f"连接遇到错误，请检查配置页面: {str(e)[:150]}"}
 
         # 5. 打印完整回复
         logger.info("AI 回复:\n%s", result_text)
