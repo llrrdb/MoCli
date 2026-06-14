@@ -100,12 +100,18 @@ Special Debug Command:
         # 每次请求时刷新记忆容量设定
         self._update_memory_size()
 
-        # 1. 截屏
-        try:
-            img_base64, width, height = capture_screen()
-            logger.info("屏幕已压缩截取并编码，对应物理原分辨率: %dx%d", width, height)
-        except Exception as e:
-            return {"spoken_text": "", "point": None, "error": f"截屏失败: {e}"}
+        visual_mode = self.db.get("visual_mode", "auto")
+        from screen import get_screen_size
+        width, height = get_screen_size()
+        img_base64 = None
+
+        # 如果开启则立即截屏
+        if visual_mode == "on":
+            try:
+                img_base64, width, height = capture_screen()
+                logger.info("屏幕已压缩截取并编码，对应物理原分辨率: %dx%d", width, height)
+            except Exception as e:
+                return {"spoken_text": "", "point": None, "error": f"截屏失败: {e}"}
 
         # 2. 构建系统提示词
         system_prompt = self._build_system_prompt(width, height)
@@ -123,18 +129,18 @@ Special Debug Command:
             else:
                 messages.append(msg)
 
-        # 当前消息：包含截图
+        # 当前消息：根据是否已有截图组装
+        user_content = [{"type": "text", "text": user_text}]
+        if img_base64:
+            user_content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{img_base64}"
+                }
+            })
         messages.append({
             "role": "user",
-            "content": [
-                {"type": "text", "text": user_text},
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{img_base64}"
-                    }
-                }
-            ]
+            "content": user_content
         })
 
         # 4. 组装参数与下发请求
@@ -167,9 +173,66 @@ Special Debug Command:
         if base_url:
             kwargs["api_base"] = base_url
 
+        if visual_mode == "auto":
+            kwargs["tools"] = [{
+                "type": "function",
+                "function": {
+                    "name": "capture_screen",
+                    "description": "获取当前计算机屏幕截图。当你需要查看用户的界面、代码或解决与屏幕内容相关的问题时调用。",
+                    "parameters": {"type": "object", "properties": {}}
+                }
+            }]
+
         try:
             response = litellm.completion(**kwargs)
-            result_text = response.choices[0].message.content
+            choice = response.choices[0]
+            
+            # 处理 Tool Call
+            if getattr(choice.message, "tool_calls", None) and visual_mode == "auto":
+                tool_call = choice.message.tool_calls[0]
+                if tool_call.function.name == "capture_screen":
+                    logger.info("🤖 AI 主动请求截取屏幕...")
+                    try:
+                        img_base64, width, height = capture_screen()
+                        
+                        # 添加 assistant 的 tool_calls 响应
+                        msg_dict = choice.message.model_dump() if hasattr(choice.message, 'model_dump') else choice.message.dict()
+                        messages.append(msg_dict)
+                        
+                        # 添加 tool 的返回结果
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "name": "capture_screen",
+                            "content": "截屏成功，图片已附在下一条消息中。"
+                        })
+                        
+                        # 注入图片作为 user 消息
+                        messages.append({
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{img_base64}"
+                                    }
+                                }
+                            ]
+                        })
+                        
+                        kwargs.pop("tools", None) # 移除 tool
+                        kwargs["messages"] = messages
+                        
+                        logger.info("向 AI 发送截屏结果...")
+                        response = litellm.completion(**kwargs)
+                        result_text = response.choices[0].message.content
+                    except Exception as e:
+                        logger.error("自动截屏执行失败: %s", e)
+                        return {"spoken_text": "", "point": None, "error": f"截屏失败: {e}"}
+                else:
+                    result_text = choice.message.content
+            else:
+                result_text = choice.message.content
 
         except Exception as e:
             logger.error("API 侧响应异常: %s: %s", type(e).__name__, e, exc_info=True)

@@ -1,0 +1,86 @@
+# -*- coding: utf-8 -*-
+# Copyright (c) 2026 Li Rui
+# This project is licensed under CC BY-NC 4.0.
+# Commercial use is strictly prohibited without prior authorization.
+# For commercial licensing, please contact: [lr298977887@gmail.com]
+"""
+about_page.py - 关于页面
+===========================
+显示免责声明等 Markdown 渲染内容。
+"""
+
+import os
+
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTextBrowser
+from PyQt6.QtCore import Qt
+
+from qfluentwidgets import ScrollArea
+
+from utils import static
+
+
+class AboutPage(ScrollArea):
+    """关于页面——显示免责声明等信息"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("aboutPage")
+        self.setWidgetResizable(True)
+
+        content = QWidget()
+        content.setObjectName("scrollContent")
+        content.setStyleSheet("QWidget#scrollContent { background: transparent; }")
+        self.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        lay = QVBoxLayout(content)
+        lay.setContentsMargins(36, 28, 36, 28)
+        lay.setSpacing(20)
+        self.setWidget(content)
+
+        # 无标题卡片，直接放置 QTextBrowser 占满全部空间
+        self._browser = QTextBrowser()
+        self._browser.setOpenExternalLinks(True)
+        self._browser.setStyleSheet("""
+            QTextBrowser {
+                background: rgba(255, 255, 255, 0.7);
+                border: 1px solid rgba(0, 0, 0, 0.05);
+                border-radius: 8px;
+                padding: 24px;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+        """)
+
+        # 加载并渲染免责声明
+        md_path = static("免责声明.md")
+        if os.path.isfile(md_path):
+            with open(md_path, "r", encoding="utf-8") as f:
+                md_text = f.read()
+            html = self._render_markdown(md_text)
+            self._browser.setHtml(html)
+        else:
+            self._browser.setPlainText("未找到免责声明文件。")
+
+        lay.addWidget(self._browser)
+
+    @staticmethod
+    def _render_markdown(md_text: str) -> str:
+        """使用 markdown 库渲染 Markdown → HTML（带内联样式）"""
+        import markdown as md_lib
+        body = md_lib.markdown(md_text, extensions=["extra"])
+        # 注入 CSS 样式让 QTextBrowser 显示更美观
+        return f"""
+        <style>
+            body {{ font-family: 'Microsoft YaHei UI', sans-serif; color: #333; }}
+            h1, h2, h3, h4 {{ color: #1a1a2e; }}
+            h2 {{ border-bottom: 1px solid #eee; padding-bottom: 6px; }}
+            blockquote {{
+                border-left: 3px solid #005FB8;
+                padding: 8px 16px; margin: 12px 0;
+                color: #555; background: #F5F5F5;
+            }}
+            hr {{ border: none; border-top: 1px solid #ddd; margin: 16px 0; }}
+            a {{ color: #005FB8; text-decoration: none; }}
+            p {{ line-height: 1.7; margin: 6px 0; }}
+        </style>
+        {body}
+        """

@@ -76,6 +76,8 @@ class DBManager:
             "keyword_lines": "j iǎ w éi s ī @贾维斯",
             # 自定义系统提示词（空则使用内置默认值）
             "custom_system_prompt": "",
+            # 视觉感知模式 (auto, on, off)
+            "visual_mode": "auto",
         }
         for k, v in defaults.items():
             self._set_default(k, v)
