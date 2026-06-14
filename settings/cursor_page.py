@@ -7,6 +7,7 @@
 cursor_page.py - 光标设置页面
 ================================
 包含实时光标坐标监控、定点飞行测试、全局偏移量校准和屏幕中心准星。
+使用 SettingCardGroup + SettingCard/PushSettingCard，Fluent Design 风格。
 """
 
 import logging
@@ -21,11 +22,12 @@ from PyQt6.QtGui import QPainter, QColor, QPen, QCursor
 from qfluentwidgets import (
     SubtitleLabel, BodyLabel,
     LineEdit, PrimaryPushButton, PushButton,
+    SettingCard, PushSettingCard,
+    SettingCardGroup, FluentIcon,
     ScrollArea,
 )
 
 from db import DBManager
-from settings.cards import FluentCard
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +52,9 @@ class CrosshairOverlay(QWidget):
         self._phys_cx = phys_cx
         self._phys_cy = phys_cy
 
-        # 逻辑像素尺寸
         size = 200
         self.resize(size, size)
 
-        # 物理中心 → 逻辑中心（用于 Qt 定位）
         screen = QApplication.primaryScreen()
         ratio = screen.devicePixelRatio() if screen else 1.0
         logical_cx = int(phys_cx / ratio)
@@ -71,23 +71,19 @@ class CrosshairOverlay(QWidget):
         pen = QPen(QColor(255, 50, 50), 2)
         p.setPen(pen)
 
-        # 十字线（中间留空）
         gap, arm = 8, 50
         p.drawLine(cx - arm, cy, cx - gap, cy)
         p.drawLine(cx + gap, cy, cx + arm, cy)
         p.drawLine(cx, cy - arm, cx, cy - gap)
         p.drawLine(cx, cy + gap, cx, cy + arm)
 
-        # 外圆环
         r = 20
         p.drawEllipse(cx - r, cy - r, r * 2, r * 2)
 
-        # 中心小点
         p.setBrush(QColor(255, 50, 50))
         p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(cx - 3, cy - 3, 6, 6)
 
-        # 坐标标注（显示物理像素坐标）
         p.setPen(QColor(255, 50, 50))
         font = p.font()
         font.setPointSize(10)
@@ -123,6 +119,7 @@ class CursorPage(ScrollArea):
         self.setWidget(content)
 
         self._build()
+        self.lay.addStretch()
 
         # 实时光标坐标定时器
         self._cursor_timer = QTimer(self)
@@ -130,10 +127,22 @@ class CursorPage(ScrollArea):
         self._cursor_timer.start(50)
 
     def _build(self):
-        # 卡片1：实时光标监控
-        c1 = FluentCard("实时光标监控", "显示当前鼠标光标的物理像素坐标 (50ms 刷新)。")
-        coord_row = QHBoxLayout()
-        coord_row.setSpacing(40)
+        # ==========================================
+        # 卡片组1：实时光标监控
+        # ==========================================
+        monitor_group = SettingCardGroup("实时光标监控", self)
+
+        cursor_card = SettingCard(
+            FluentIcon.MOVE,
+            "当前光标坐标",
+            "50ms 实时刷新 — 物理像素坐标",
+            self
+        )
+        # 将 X/Y 标签放入右侧
+        coord_widget = QWidget()
+        coord_row = QHBoxLayout(coord_widget)
+        coord_row.setSpacing(24)
+        coord_row.setContentsMargins(0, 0, 0, 0)
         self._cursor_x_label = SubtitleLabel("X：—")
         self._cursor_x_label.setStyleSheet(
             "color: #005FB8; font-family: 'Cascadia Code', 'Consolas', monospace;")
@@ -142,104 +151,135 @@ class CursorPage(ScrollArea):
             "color: #005FB8; font-family: 'Cascadia Code', 'Consolas', monospace;")
         coord_row.addWidget(self._cursor_x_label)
         coord_row.addWidget(self._cursor_y_label)
-        coord_row.addStretch()
-        c1.add_layout(coord_row)
-        self.lay.addWidget(c1)
+        cursor_card.hBoxLayout.addWidget(coord_widget, 0, Qt.AlignmentFlag.AlignRight)
+        cursor_card.hBoxLayout.addSpacing(16)
+        monitor_group.addSettingCard(cursor_card)
 
-        # 卡片2：定点压力测试
-        c2 = FluentCard("定点测试",
-                         "输入 0–1000 归一化坐标，光标将飞向对应位置并停留 15 秒。\n"
-                         "500,500 = 屏幕正中央")
-        test_row = QHBoxLayout()
-        test_row.setSpacing(12)
+        self.lay.addWidget(monitor_group)
+
+        # ==========================================
+        # 卡片组2：定点测试
+        # ==========================================
+        fly_group = SettingCardGroup("定点测试", self)
+
+        fly_card = SettingCard(
+            FluentIcon.SEND,
+            "移动到指定坐标",
+            "0–1000 归一化坐标，500,500 = 屏幕正中央，停留 15 秒",
+            self
+        )
+        # 右侧：X/Y 输入 + 按钮
+        fly_widget = QWidget()
+        fly_row = QHBoxLayout(fly_widget)
+        fly_row.setSpacing(8)
+        fly_row.setContentsMargins(0, 0, 0, 0)
+
+        fly_row.addWidget(BodyLabel("X："))
         self._test_x = LineEdit()
         self._test_x.setText("500")
-        self._test_x.setPlaceholderText("X (0–1000)")
-        self._test_x.setFixedWidth(130)
+        self._test_x.setPlaceholderText("0–1000")
+        self._test_x.setFixedWidth(90)
         self._test_x.setMinimumHeight(36)
+        fly_row.addWidget(self._test_x)
+
+        fly_row.addWidget(BodyLabel("Y："))
         self._test_y = LineEdit()
         self._test_y.setText("500")
-        self._test_y.setPlaceholderText("Y (0–1000)")
-        self._test_y.setFixedWidth(130)
+        self._test_y.setPlaceholderText("0–1000")
+        self._test_y.setFixedWidth(90)
         self._test_y.setMinimumHeight(36)
-        test_btn = PrimaryPushButton("即时移动")
-        test_btn.setFixedWidth(120)
+        fly_row.addWidget(self._test_y)
+
+        test_btn = PrimaryPushButton("移动")
+        test_btn.setFixedWidth(72)
         test_btn.setMinimumHeight(36)
         test_btn.clicked.connect(self._test_move)
-        test_row.addWidget(BodyLabel("X："))
-        test_row.addWidget(self._test_x)
-        test_row.addWidget(BodyLabel("Y："))
-        test_row.addWidget(self._test_y)
-        test_row.addWidget(test_btn)
-        test_row.addStretch()
-        c2.add_layout(test_row)
-        c2.add_divider()
+        fly_row.addWidget(test_btn)
 
-        # 屏幕中心准星切换按钮
-        crosshair_row = QHBoxLayout()
-        self._crosshair_btn = PushButton("🎯 显示屏幕中心")
-        self._crosshair_btn.setMinimumHeight(36)
-        self._crosshair_btn.setToolTip("在物理屏幕正中央显示/隐藏准星。")
-        self._crosshair_btn.clicked.connect(self._toggle_crosshair)
-        crosshair_row.addWidget(self._crosshair_btn)
-        crosshair_row.addStretch()
-        c2.add_layout(crosshair_row)
-        self.lay.addWidget(c2)
+        fly_card.hBoxLayout.addWidget(fly_widget, 0, Qt.AlignmentFlag.AlignRight)
+        fly_card.hBoxLayout.addSpacing(16)
+        fly_group.addSettingCard(fly_card)
 
-        # 卡片3：全局偏移（实时预览）
-        c3 = FluentCard("全局定位偏移量",
-                         "在归一化坐标空间内叠加统一补偿，消除系统性定位偏差。\n"
-                         "修改后立即生效（光标会飞向 500,500 + 偏移量 的位置）。")
-        off_row = QHBoxLayout()
-        off_row.setSpacing(12)
+        # 准星切换
+        crosshair_card = PushSettingCard(
+            "显示屏幕中心",
+            FluentIcon.MOVE,
+            "屏幕中心准星",
+            "在物理屏幕正中央显示/隐藏校准准星",
+            parent=self
+        )
+        self._crosshair_btn = crosshair_card  # 保留属性名兼容
+        crosshair_card.clicked.connect(self._toggle_crosshair)
+        fly_group.addSettingCard(crosshair_card)
+
+        self.lay.addWidget(fly_group)
+
+        # ==========================================
+        # 卡片组3：全局偏移
+        # ==========================================
+        offset_group = SettingCardGroup("全局定位偏移量", self)
+
+        offset_card = SettingCard(
+            FluentIcon.ALIGNMENT,
+            "偏移量校准",
+            "正数向右/下偏移，负数向左/上偏移；修改后光标自动飞向预览位置",
+            self
+        )
+        offset_widget = QWidget()
+        offset_row = QHBoxLayout(offset_widget)
+        offset_row.setSpacing(8)
+        offset_row.setContentsMargins(0, 0, 0, 0)
+
+        offset_row.addWidget(BodyLabel("X："))
         self._offset_x = LineEdit()
         self._offset_x.setText(self.db.get("offset_x", "0"))
         self._offset_x.setPlaceholderText("0")
-        self._offset_x.setFixedWidth(130)
+        self._offset_x.setFixedWidth(80)
         self._offset_x.setMinimumHeight(36)
+        offset_row.addWidget(self._offset_x)
+
+        offset_row.addWidget(BodyLabel("Y："))
         self._offset_y = LineEdit()
         self._offset_y.setText(self.db.get("offset_y", "0"))
         self._offset_y.setPlaceholderText("0")
-        self._offset_y.setFixedWidth(130)
+        self._offset_y.setFixedWidth(80)
         self._offset_y.setMinimumHeight(36)
+        offset_row.addWidget(self._offset_y)
 
-        # 实时偏移预览：输入变化时自动飞行
+        offset_card.hBoxLayout.addWidget(offset_widget, 0, Qt.AlignmentFlag.AlignRight)
+        offset_card.hBoxLayout.addSpacing(16)
+        offset_group.addSettingCard(offset_card)
+
+        # 实时偏移预览
         self._offset_x.textChanged.connect(self._on_offset_changed)
         self._offset_y.textChanged.connect(self._on_offset_changed)
 
-        off_row.addWidget(BodyLabel("偏移 X："))
-        off_row.addWidget(self._offset_x)
-        off_row.addWidget(BodyLabel("偏移 Y："))
-        off_row.addWidget(self._offset_y)
-        off_row.addStretch()
-        c3.add_layout(off_row)
+        self.lay.addWidget(offset_group)
 
-        hint = BodyLabel("正数向右/下偏移，负数向左/上偏移。参考实时坐标进行调校。")
-        hint.setStyleSheet("color: #767676;")
-        c3.add_widget(hint)
-        self.lay.addWidget(c3)
-
-        self.lay.addStretch()
+    # ==========================================
+    # 实时坐标
+    # ==========================================
 
     def _update_cursor_pos(self):
-        """实时更新光标坐标（显示物理像素坐标）"""
         pos = QCursor.pos()
         screen = QApplication.primaryScreen()
         ratio = screen.devicePixelRatio() if screen else 1.0
-        # 逻辑坐标 × DPR = 物理像素
         phys_x = int(pos.x() * ratio)
         phys_y = int(pos.y() * ratio)
         self._cursor_x_label.setText(f"X：{phys_x}")
         self._cursor_y_label.setText(f"Y：{phys_y}")
 
+    # ==========================================
+    # 准星
+    # ==========================================
+
     def _toggle_crosshair(self):
-        """切换准星显示/隐藏"""
         if self._crosshair_visible:
             self._hide_crosshair()
-            self._crosshair_btn.setText("🎯 显示屏幕中心")
+            self._crosshair_btn.button.setText("显示屏幕中心")
         else:
             self._show_crosshair()
-            self._crosshair_btn.setText("✖ 隐藏屏幕中心")
+            self._crosshair_btn.button.setText("隐藏屏幕中心")
 
     def _show_crosshair(self):
         from screen import get_screen_size
@@ -260,8 +300,11 @@ class CursorPage(ScrollArea):
             self._crosshair = None
         self._crosshair_visible = False
 
+    # ==========================================
+    # 偏移量 & 测试飞行
+    # ==========================================
+
     def _on_offset_changed(self):
-        """偏移量输入变化时实时预览——飞向 500,500 + 偏移量"""
         if not self._triangle_cursor:
             return
         try:
@@ -271,7 +314,6 @@ class CursorPage(ScrollArea):
             return
         from screen import get_screen_size
         sw, sh = get_screen_size()
-        # 500,500 是屏幕中心归一化坐标，叠加偏移后换算为物理像素
         px = int(((500 + ox) / 1000) * sw)
         py = int(((500 + oy) / 1000) * sh)
         self._triangle_cursor.test_move_to(px, py, duration_sec=8)

@@ -7,19 +7,20 @@
 voice_page.py - 语音交互配置页面
 ===================================
 管理语音唤醒 (KWS) 和语音合成 (TTS) 的配置。
+使用 SettingCardGroup + SettingCard 组件族，Fluent Design 风格。
 """
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
+from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtCore import Qt
 
 from qfluentwidgets import (
-    BodyLabel, LineEdit, PushButton,
-    SwitchButton,
+    BodyLabel, LineEdit,
+    SettingCard, SwitchSettingCard, PushSettingCard,
+    SettingCardGroup, FluentIcon,
     ScrollArea,
 )
 
 from db import DBManager
-from settings.cards import FluentCard
 
 
 class VoicePage(ScrollArea):
@@ -41,65 +42,125 @@ class VoicePage(ScrollArea):
         self.setWidget(content)
 
         self._build()
+        self.lay.addStretch()
 
     def _build(self):
-        # 卡片1：语音唤醒
-        c1 = FluentCard("语音唤醒 (KWS)", "说出唤醒词自动激活麦克风，也可按 F10 直接唤醒。")
-        row_wake = QHBoxLayout()
-        row_wake.addWidget(BodyLabel("启用语音唤醒"))
-        row_wake.addStretch()
-        self.wakeup_switch = SwitchButton()
-        self.wakeup_switch.setChecked(self.db.get_bool("wakeup_enabled"))
-        row_wake.addWidget(self.wakeup_switch)
-        c1.add_layout(row_wake)
-        c1.add_divider()
+        # ==========================================
+        # 卡片组1：语音唤醒 (KWS)
+        # ==========================================
+        kws_group = SettingCardGroup("语音唤醒", self)
 
+        self._wakeup_card = SwitchSettingCard(
+            FluentIcon.MEGAPHONE,
+            "启用语音唤醒",
+            "说出唤醒词自动激活麦克风，也可按 F10 直接唤醒",
+            configItem=None,
+            parent=self
+        )
+        self._wakeup_card.switchButton.setChecked(self.db.get_bool("wakeup_enabled"))
+        kws_group.addSettingCard(self._wakeup_card)
+
+        keyword_card = SettingCard(
+            FluentIcon.LANGUAGE,
+            "唤醒词（纯中文）",
+            "例如：贾维斯",
+            self
+        )
         self.keyword_input = LineEdit()
         self.keyword_input.setText(self.db.get("wakeup_keyword"))
         self.keyword_input.setPlaceholderText("贾维斯")
-        c1.add_row("唤醒词（纯中文）", self.keyword_input)
+        self.keyword_input.setMinimumWidth(200)
+        keyword_card.hBoxLayout.addWidget(self.keyword_input, 0, Qt.AlignmentFlag.AlignRight)
+        keyword_card.hBoxLayout.addSpacing(16)
+        kws_group.addSettingCard(keyword_card)
 
+        self.lay.addWidget(kws_group)
+
+        # 拼音预览标签（独立于卡片组）
         self._kw_preview = BodyLabel("拼音预览：（输入唤醒词后自动生成）")
         self._kw_preview.setWordWrap(True)
+        self._kw_preview.setContentsMargins(12, 0, 12, 0)
         self._kw_preview.setStyleSheet("color: #767676;")
-        c1.add_widget(self._kw_preview)
-
-        preview_btn = PushButton("预览拼音")
-        preview_btn.setMinimumHeight(36)
-        preview_btn.clicked.connect(self._preview_keyword)
-        c1.add_widget(preview_btn)
-
-        # 初始化预览
         saved_lines = self.db.get("keyword_lines", "")
         if saved_lines:
             self._kw_preview.setText("已保存的拼音：" + saved_lines)
+        self.lay.addWidget(self._kw_preview)
+
+        # 预览按钮
+        preview_btn = PushSettingCard(
+            "预览拼音",
+            FluentIcon.FONT,
+            "拼音预览",
+            "点击生成唤醒词的拼音格式供 KWS 使用",
+            parent=self
+        )
+        preview_btn.clicked.connect(self._preview_keyword)
+        self.lay.addWidget(preview_btn)
+        # 联动：输入变化时自动预览
         self.keyword_input.textChanged.connect(self._preview_keyword)
-        self.lay.addWidget(c1)
 
-        # 卡片2：语音合成
-        c2 = FluentCard("语音合成 (TTS)", "AI 回复将通过 TTS 服务自动朗读。")
-        row_tts = QHBoxLayout()
-        row_tts.addWidget(BodyLabel("启用 AI 语音回复"))
-        row_tts.addStretch()
-        self.tts_switch = SwitchButton()
-        self.tts_switch.setChecked(self.db.get_bool("tts_enabled"))
-        row_tts.addWidget(self.tts_switch)
-        c2.add_layout(row_tts)
-        c2.add_divider()
+        # ==========================================
+        # 卡片组2：语音合成 (TTS)
+        # ==========================================
+        tts_group = SettingCardGroup("语音合成", self)
 
+        self._tts_card = SwitchSettingCard(
+            FluentIcon.HEADPHONE,
+            "启用 AI 语音回复",
+            "AI 回复将通过 TTS 服务自动朗读",
+            configItem=None,
+            parent=self
+        )
+        self._tts_card.switchButton.setChecked(self.db.get_bool("tts_enabled"))
+        tts_group.addSettingCard(self._tts_card)
+
+        tts_url_card = SettingCard(
+            FluentIcon.GLOBE,
+            "TTS 服务地址",
+            "本地或远程 TTS HTTP API 端点",
+            self
+        )
         self.tts_url_input = LineEdit()
         self.tts_url_input.setText(self.db.get("tts_url"))
         self.tts_url_input.setPlaceholderText("http://localhost:8100/v1/audio/speech")
-        c2.add_row("TTS 服务地址", self.tts_url_input)
-        c2.add_divider()
+        self.tts_url_input.setMinimumWidth(280)
+        tts_url_card.hBoxLayout.addWidget(self.tts_url_input, 0, Qt.AlignmentFlag.AlignRight)
+        tts_url_card.hBoxLayout.addSpacing(16)
+        tts_group.addSettingCard(tts_url_card)
 
+        tts_model_card = SettingCard(
+            FluentIcon.CODE,
+            "TTS 语音模型标识",
+            "例如：model-base",
+            self
+        )
         self.tts_model_input = LineEdit()
         self.tts_model_input.setText(self.db.get("tts_model"))
         self.tts_model_input.setPlaceholderText("model-base")
-        c2.add_row("TTS 语音模型标识", self.tts_model_input)
-        self.lay.addWidget(c2)
+        self.tts_model_input.setMinimumWidth(200)
+        tts_model_card.hBoxLayout.addWidget(self.tts_model_input, 0, Qt.AlignmentFlag.AlignRight)
+        tts_model_card.hBoxLayout.addSpacing(16)
+        tts_group.addSettingCard(tts_model_card)
 
-        self.lay.addStretch()
+        self.lay.addWidget(tts_group)
+
+    # ==========================================
+    # 属性别名 — 保持 window.py 兼容
+    # ==========================================
+
+    @property
+    def wakeup_switch(self):
+        """向后兼容：window.py 通过此属性访问开关状态"""
+        return self._wakeup_card.switchButton
+
+    @property
+    def tts_switch(self):
+        """向后兼容：window.py 通过此属性访问开关状态"""
+        return self._tts_card.switchButton
+
+    # ==========================================
+    # 拼音预览
+    # ==========================================
 
     def _preview_keyword(self):
         from wakeup import WakeupEngine

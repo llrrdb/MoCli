@@ -7,19 +7,21 @@
 visual_page.py - 视觉感知配置页面
 ====================================
 管理截屏模式（自动 / 开启 / 关闭）。
+使用 SettingCardGroup + SettingCard，Fluent Design 风格。
 """
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
+from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtCore import Qt
 
 from qfluentwidgets import (
     BodyLabel,
+    SettingCard, SettingCardGroup,
     ComboBox,
+    FluentIcon,
     ScrollArea,
 )
 
 from db import DBManager
-from settings.cards import FluentCard
 
 
 class VisualPage(ScrollArea):
@@ -41,17 +43,23 @@ class VisualPage(ScrollArea):
         self.setWidget(content)
 
         self._build()
+        self.lay.addStretch()
 
     def _build(self):
-        c1 = FluentCard("视觉感知模式", "配置 AI 是否获取您的屏幕截图。")
-        row = QHBoxLayout()
-        row.addWidget(BodyLabel("截屏模式"))
-        row.addStretch()
+        group = SettingCardGroup("视觉感知", self)
+
+        mode_card = SettingCard(
+            FluentIcon.CAMERA,
+            "截屏模式",
+            "配置 AI 是否获取您的屏幕截图",
+            self
+        )
 
         self.mode_combo = ComboBox()
         self.mode_combo.addItem("自动 (按需调用)", userData="auto")
         self.mode_combo.addItem("开启 (每次截屏)", userData="on")
         self.mode_combo.addItem("关闭 (从不截屏)", userData="off")
+        self.mode_combo.setMinimumWidth(200)
 
         current_mode = self.db.get("visual_mode", "auto")
         if current_mode == "on":
@@ -61,17 +69,18 @@ class VisualPage(ScrollArea):
         else:
             self.mode_combo.setCurrentIndex(0)
 
-        row.addWidget(self.mode_combo)
-        c1.add_layout(row)
-        c1.add_divider()
+        mode_card.hBoxLayout.addWidget(self.mode_combo, 0, Qt.AlignmentFlag.AlignRight)
+        mode_card.hBoxLayout.addSpacing(16)
+        group.addSettingCard(mode_card)
 
+        self.lay.addWidget(group)
+
+        # 模式说明
         hint = BodyLabel(
             "自动：AI 判断需要时主动请求截屏（推荐）。\n"
             "开启：每次对话都发送截屏（可能造成浪费）。\n"
             "关闭：完全禁用截屏（纯文本对话）。"
         )
+        hint.setContentsMargins(12, 0, 12, 0)
         hint.setStyleSheet("color: #767676;")
-        c1.add_widget(hint)
-
-        self.lay.addWidget(c1)
-        self.lay.addStretch()
+        self.lay.addWidget(hint)

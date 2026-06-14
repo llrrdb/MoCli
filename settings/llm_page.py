@@ -6,7 +6,8 @@
 """
 llm_page.py - 大模型引擎配置页面
 ===================================
-管理 VLM 连接参数（Base URL、Model ID、API Key）、对话记忆和系统提示词。
+管理 VLM 连接参数、对话记忆和系统提示词。
+使用 SettingCardGroup + SettingCard/PrimaryPushSettingCard，Fluent Design 风格。
 """
 
 import logging
@@ -20,13 +21,14 @@ from PyQt6.QtGui import QFont
 
 from qfluentwidgets import (
     BodyLabel,
-    LineEdit, PrimaryPushButton, PushButton,
+    LineEdit, PrimaryPushSettingCard, PushButton,
+    SettingCard, SettingCardGroup,
     Slider, TextEdit,
+    FluentIcon,
     ScrollArea, InfoBar, InfoBarPosition,
 )
 
 from db import DBManager
-from settings.cards import FluentCard
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +53,9 @@ class LLMPage(ScrollArea):
         self.lay.setSpacing(20)
         self.setWidget(content)
 
-        # 连接跨线程回调信号
         self._test_signal.connect(self._on_test_done)
-
         self._build()
+        self.lay.addStretch()
 
     def _build(self):
         # 预设集合
@@ -68,9 +69,18 @@ class LLMPage(ScrollArea):
             "【自定义 / 第三方兼容】": {"url": "", "model": ""}
         }
 
-        # 卡片1：API 连接配置
-        c1 = FluentCard("API 连接配置", "配置与大语言模型 (VLM) 服务的通信参数。选择预设平台体验自动回填。")
+        # ==========================================
+        # 卡片组1：API 连接配置
+        # ==========================================
+        api_group = SettingCardGroup("API 连接配置", self)
 
+        # 1a. 平台预设
+        provider_card = SettingCard(
+            FluentIcon.GLOBE,
+            "平台预设 (Provider)",
+            "选择预设模型平台，自动回填地址与模型标识",
+            self
+        )
         self.provider_combo = QComboBox()
         self.provider_combo.setStyleSheet("""
             QComboBox {
@@ -82,14 +92,11 @@ class LLMPage(ScrollArea):
                 font-size: 14px;
                 min-height: 24px;
             }
-            QComboBox::drop-down {
-                border: none;
-            }
+            QComboBox::drop-down { border: none; }
         """)
         for k in self.preset_providers.keys():
             self.provider_combo.addItem(k)
 
-        # 尝试通过当前的 base_url 倒推匹配当前的 provider 下拉列表位置
         current_url = self.db.get("base_url", "")
         matched_idx = list(self.preset_providers.keys()).index("【自定义 / 第三方兼容】")
         for i, (k, v) in enumerate(self.preset_providers.items()):
@@ -98,40 +105,160 @@ class LLMPage(ScrollArea):
                 break
         self.provider_combo.setCurrentIndex(matched_idx)
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
-        c1.add_row("平台预设 (Provider)", self.provider_combo)
-        c1.add_divider()
+        self.provider_combo.setMinimumWidth(250)
 
+        provider_card.hBoxLayout.addWidget(self.provider_combo, 0, Qt.AlignmentFlag.AlignRight)
+        provider_card.hBoxLayout.addSpacing(16)
+        api_group.addSettingCard(provider_card)
+
+        # 1b. Base URL
+        url_card = SettingCard(
+            FluentIcon.GLOBE,
+            "Base URL（端点地址）",
+            "API 服务端点，兼容 OpenAI 接口格式",
+            self
+        )
         self.url_input = LineEdit()
         self.url_input.setText(self.db.get("base_url"))
         self.url_input.setPlaceholderText("https://api.example.com/v1")
-        c1.add_row("Base URL（端点地址）", self.url_input)
-        c1.add_divider()
+        self.url_input.setMinimumWidth(280)
+        url_card.hBoxLayout.addWidget(self.url_input, 0, Qt.AlignmentFlag.AlignRight)
+        url_card.hBoxLayout.addSpacing(16)
+        api_group.addSettingCard(url_card)
 
+        # 1c. 模型标识
+        model_card = SettingCard(
+            FluentIcon.CODE,
+            "模型标识码 (Model ID)",
+            "例如：qwen-vl-max / gpt-4o",
+            self
+        )
         self.model_input = LineEdit()
         self.model_input.setText(self.db.get("model"))
-        self.model_input.setPlaceholderText("例如：qwen-vl-max  /  gpt-4o")
-        c1.add_row("模型标识码 (Model ID)", self.model_input)
-        c1.add_divider()
+        self.model_input.setPlaceholderText("qwen-vl-max / gpt-4o")
+        self.model_input.setMinimumWidth(200)
+        model_card.hBoxLayout.addWidget(self.model_input, 0, Qt.AlignmentFlag.AlignRight)
+        model_card.hBoxLayout.addSpacing(16)
+        api_group.addSettingCard(model_card)
 
+        # 1d. API Key
+        key_card = SettingCard(
+            FluentIcon.GLOBE,
+            "API 密钥 (API Key)",
+            "输入您的 API 认证密钥",
+            self
+        )
         self.api_key_input = LineEdit()
         self.api_key_input.setText(self.db.get("api_key"))
         self.api_key_input.setEchoMode(LineEdit.EchoMode.Password)
         self.api_key_input.setPlaceholderText("sk-xxxxxxxxxxxxxxxxxxxxxxxx")
-        c1.add_row("API 密钥 (API Key)", self.api_key_input)
-        c1.add_divider()
+        self.api_key_input.setMinimumWidth(200)
+        key_card.hBoxLayout.addWidget(self.api_key_input, 0, Qt.AlignmentFlag.AlignRight)
+        key_card.hBoxLayout.addSpacing(16)
+        api_group.addSettingCard(key_card)
 
-        self.test_btn = PrimaryPushButton("测试连接验证")
-        self.test_btn.clicked.connect(self._test_connection)
+        # 1e. 测试连接
+        self._test_card = PrimaryPushSettingCard(
+            "测试连接验证",
+            FluentIcon.SEND,
+            "连接测试",
+            "发起一次 API 握手请求，验证配置是否正确",
+            parent=self
+        )
+        self._test_card.clicked.connect(self._test_connection)
+        api_group.addSettingCard(self._test_card)
 
-        btn_ly = QHBoxLayout()
-        btn_ly.addStretch()
-        btn_ly.addWidget(self.test_btn)
-        c1.add_layout(btn_ly)
+        self.lay.addWidget(api_group)
 
-        self.lay.addWidget(c1)
+        # ==========================================
+        # 卡片组2：对话配置
+        # ==========================================
+        mem_group = SettingCardGroup("对话配置", self)
 
-        # 构建剩余卡片（对话记忆 + 系统提示词）
-        self._build_card2_and_card3()
+        # 2a. 对话记忆
+        mem_card = SettingCard(
+            FluentIcon.HISTORY,
+            "对话记忆",
+            "设定 AI 可回忆的最近历史对话轮数。数值越大，消耗 Token 越多",
+            self
+        )
+        mem_val = self.db.get_int("memory_size")
+        self._mem_label = BodyLabel(f"{mem_val} 条")
+        self._mem_label.setStyleSheet("color: #005FB8; font-weight: 600; min-width: 40px;")
+
+        self.memory_slider = Slider(Qt.Orientation.Horizontal)
+        self.memory_slider.setRange(2, 50)
+        self.memory_slider.setValue(mem_val)
+        self.memory_slider.setMinimumWidth(160)
+        self.memory_slider.setMinimumHeight(32)
+        self.memory_slider.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.memory_slider.installEventFilter(self)
+        self.memory_slider.valueChanged.connect(
+            lambda v: self._mem_label.setText(f"{v} 条")
+        )
+
+        slider_widget = QWidget()
+        slider_row = QHBoxLayout(slider_widget)
+        slider_row.setSpacing(8)
+        slider_row.setContentsMargins(0, 0, 0, 0)
+        slider_row.addWidget(self.memory_slider)
+        slider_row.addWidget(self._mem_label)
+
+        mem_card.hBoxLayout.addWidget(slider_widget, 0, Qt.AlignmentFlag.AlignRight)
+        mem_card.hBoxLayout.addSpacing(16)
+        mem_group.addSettingCard(mem_card)
+
+        # 2b. 系统提示词
+        prompt_card = SettingCard(
+            FluentIcon.DOCUMENT,
+            "系统提示词 (System Prompt)",
+            "定义 AI 的个性与行为准则，可直接编辑或恢复默认",
+            self
+        )
+        mem_group.addSettingCard(prompt_card)
+
+        self.lay.addWidget(mem_group)
+
+        # 系统提示词编辑区（放在组外的独立区域）
+        self.prompt_edit = TextEdit()
+        saved_prompt = self.db.get("custom_system_prompt", "").strip()
+        if saved_prompt:
+            self.prompt_edit.setPlainText(saved_prompt)
+        else:
+            from llm import LLMEngine
+            self.prompt_edit.setPlainText(LLMEngine.DEFAULT_SYSTEM_PROMPT)
+        self.prompt_edit.setMinimumHeight(250)
+        self.prompt_edit.setStyleSheet("""
+            TextEdit {
+                border: 1px solid rgba(0, 0, 0, 0.05);
+                border-radius: 8px;
+                background: rgba(255, 255, 255, 0.7);
+                padding: 12px;
+            }
+        """)
+        self.lay.addWidget(self.prompt_edit)
+
+        # 恢复默认按钮
+        reset_row = QHBoxLayout()
+        reset_row.addStretch()
+        reset_btn = PushButton("恢复内置默认")
+        reset_btn.setMinimumHeight(36)
+        reset_btn.clicked.connect(self._reset_prompt)
+        reset_row.addWidget(reset_btn)
+        self.lay.addLayout(reset_row)
+
+    # ==========================================
+    # 属性别名 — 保持内部兼容
+    # ==========================================
+
+    @property
+    def test_btn(self):
+        """向后兼容：返回测试卡片的内部按钮"""
+        return self._test_card.button
+
+    # ==========================================
+    # Provider 预设切换
+    # ==========================================
 
     def _on_provider_changed(self, idx):
         provider_name = self.provider_combo.currentText()
@@ -141,26 +268,25 @@ class LLMPage(ScrollArea):
                 self.url_input.setText(preset["url"])
             else:
                 self.url_input.clear()
-
-            # 使用原生自带 URL 时清空占位
             if not preset["url"]:
                 self.url_input.setPlaceholderText("该平台由客户端原生支持，通常无需填写 Base URL")
             else:
                 self.url_input.setPlaceholderText("https://api.example.com/v1")
-
             if preset["model"]:
                 self.model_input.setText(preset["model"])
-
         elif provider_name == "【自定义 / 第三方兼容】":
             self.url_input.setPlaceholderText("请输入第三方接口基地址 (应当包含 /v1)")
 
+    # ==========================================
+    # 连接测试
+    # ==========================================
+
     def _test_connection(self):
-        """发起对该设定的临时握手网络测速连接"""
         self.test_btn.setEnabled(False)
         self.test_btn.setText("测试通讯中...")
         InfoBar.info(
             title="请求已发出",
-            content="LiteLLM 正在向选定的大模型下发握手握手，请耐心等待...",
+            content="LiteLLM 正在向选定的大模型下发握手请求，请耐心等待...",
             orient=Qt.Orientation.Horizontal,
             isClosable=True,
             position=InfoBarPosition.TOP,
@@ -172,15 +298,11 @@ class LLMPage(ScrollArea):
         test_key = self.api_key_input.text().strip()
         test_model = self.model_input.text().strip()
 
-        # 剥离主线程开子线程做 HTTP 连接，不阻塞 UI 动效滚动
         def worker():
-            import litellm
             from litellm import completion
             try:
-                # 路由逻辑与 llm.py 保持一致
                 model_route = test_model or "undefined"
                 if test_url:
-                    # 有 base_url 时: 走 openai 兼容通道，剥离非标前缀
                     if "/" in model_route:
                         model_route = model_route.split("/", 1)[1]
                     model_route = f"openai/{model_route}"
@@ -191,13 +313,10 @@ class LLMPage(ScrollArea):
                     "temperature": 0.1,
                     "max_tokens": 15
                 }
-
-                # 兼容虚假凭据（像 Ollama 这种没密码的）
                 if test_key:
                     kwargs["api_key"] = test_key
                 else:
                     kwargs["api_key"] = "dummy"
-
                 if test_url:
                     kwargs["api_base"] = test_url
 
@@ -235,62 +354,19 @@ class LLMPage(ScrollArea):
                 parent=self.window()
             )
 
-    def _build_card2_and_card3(self):
-        """构建对话记忆和系统提示词卡片（由 _build 调用）"""
-        # 卡片2：对话记忆
-        c2 = FluentCard("对话记忆", "设定 AI 可以回忆的最近历史对话轮数。数值越大，消耗 Token 越多。")
-        mem_val = self.db.get_int("memory_size")
-        self._mem_label = BodyLabel(f"当前容量：{mem_val} 条历史对话")
-        c2.add_widget(self._mem_label)
-
-        self.memory_slider = Slider(Qt.Orientation.Horizontal)
-        self.memory_slider.setRange(2, 50)
-        self.memory_slider.setValue(mem_val)
-        self.memory_slider.setMinimumHeight(32)
-        self.memory_slider.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.memory_slider.installEventFilter(self)
-        self.memory_slider.valueChanged.connect(
-            lambda v: self._mem_label.setText(f"当前容量：{v} 条历史对话")
-        )
-        c2.add_widget(self.memory_slider)
-
-        hint = BodyLabel("推荐值：6–16 条。设置过高可能导致响应速度变慢。")
-        hint.setStyleSheet("color: #767676;")
-        c2.add_widget(hint)
-        self.lay.addWidget(c2)
-
-        # 卡片3：系统提示词
-        c3 = FluentCard("系统提示词 (System Prompt)",
-                         "定义 AI 的个性与行为准则。可直接编辑内置默认提示词或替换为自定义内容。")
-        self.prompt_edit = TextEdit()
-        # 加载已保存的自定义提示词，如果没有则显示内置默认提示词
-        saved_prompt = self.db.get("custom_system_prompt", "").strip()
-        if saved_prompt:
-            self.prompt_edit.setPlainText(saved_prompt)
-        else:
-            from llm import LLMEngine
-            self.prompt_edit.setPlainText(LLMEngine.DEFAULT_SYSTEM_PROMPT)
-        self.prompt_edit.setMinimumHeight(250)
-        c3.add_widget(self.prompt_edit)
-
-        btn_row = QHBoxLayout()
-        reset_btn = PushButton("恢复内置默认")
-        reset_btn.setMinimumHeight(36)
-        reset_btn.clicked.connect(self._reset_prompt)
-        btn_row.addWidget(reset_btn)
-        btn_row.addStretch()
-        c3.add_layout(btn_row)
-        self.lay.addWidget(c3)
-
-        self.lay.addStretch()
+    # ==========================================
+    # 系统提示词
+    # ==========================================
 
     def _reset_prompt(self):
-        """恢复内置默认提示词"""
         from llm import LLMEngine
         self.prompt_edit.setPlainText(LLMEngine.DEFAULT_SYSTEM_PROMPT)
 
+    # ==========================================
+    # 滑块滚轮拦截
+    # ==========================================
+
     def eventFilter(self, obj, event):
-        """拦截滑块的滚轮事件，防止滚动页面时误触"""
         if hasattr(self, 'memory_slider') and obj is self.memory_slider and event.type() == QEvent.Type.Wheel:
-            return True  # 吐掉滚轮事件
+            return True
         return super().eventFilter(obj, event)

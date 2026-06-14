@@ -7,6 +7,7 @@
 about_page.py - 关于页面
 ===========================
 显示免责声明等 Markdown 渲染内容。
+使用 SettingCardGroup 包裹，Fluent Design 风格。
 """
 
 import os
@@ -14,7 +15,10 @@ import os
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTextBrowser
 from PyQt6.QtCore import Qt
 
-from qfluentwidgets import ScrollArea
+from qfluentwidgets import (
+    SettingCardGroup, FluentIcon,
+    ScrollArea,
+)
 
 from utils import static
 
@@ -31,12 +35,19 @@ class AboutPage(ScrollArea):
         content.setObjectName("scrollContent")
         content.setStyleSheet("QWidget#scrollContent { background: transparent; }")
         self.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-        lay = QVBoxLayout(content)
-        lay.setContentsMargins(36, 28, 36, 28)
-        lay.setSpacing(20)
+        self.lay = QVBoxLayout(content)
+        self.lay.setContentsMargins(36, 28, 36, 28)
+        self.lay.setSpacing(20)
         self.setWidget(content)
 
-        # 无标题卡片，直接放置 QTextBrowser 占满全部空间
+        self._build()
+
+    def _build(self):
+        # 分组标题
+        group = SettingCardGroup("关于 MoCli", self)
+        self.lay.addWidget(group)
+
+        # 内容浏览器
         self._browser = QTextBrowser()
         self._browser.setOpenExternalLinks(True)
         self._browser.setStyleSheet("""
@@ -50,7 +61,6 @@ class AboutPage(ScrollArea):
             }
         """)
 
-        # 加载并渲染免责声明
         md_path = static("免责声明.md")
         if os.path.isfile(md_path):
             with open(md_path, "r", encoding="utf-8") as f:
@@ -60,14 +70,13 @@ class AboutPage(ScrollArea):
         else:
             self._browser.setPlainText("未找到免责声明文件。")
 
-        lay.addWidget(self._browser)
+        self.lay.addWidget(self._browser)
+        self.lay.addStretch()
 
     @staticmethod
     def _render_markdown(md_text: str) -> str:
-        """使用 markdown 库渲染 Markdown → HTML（带内联样式）"""
         import markdown as md_lib
         body = md_lib.markdown(md_text, extensions=["extra"])
-        # 注入 CSS 样式让 QTextBrowser 显示更美观
         return f"""
         <style>
             body {{ font-family: 'Microsoft YaHei UI', sans-serif; color: #333; }}
